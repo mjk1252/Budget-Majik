@@ -1,0 +1,148 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'unsafe-inline'" />
+<title>Budget Majik</title>
+<link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+<div class="bg">
+  <div class="orb orb-1"></div>
+  <div class="orb orb-2"></div>
+  <div class="orb orb-3"></div>
+  <div class="orb orb-4"></div>
+</div>
+
+<main class="app">
+
+  <!-- ===== Header ===== -->
+  <header class="topbar glass">
+    <div class="brand">
+      <div class="brand-mark">◈</div>
+      <div class="brand-name">Budget <span>Majik</span></div>
+    </div>
+    <div class="month-nav">
+      <button class="icon-btn" id="prevMonth" title="Previous month">‹</button>
+      <div class="month-label" id="monthLabel">July 2026</div>
+      <button class="icon-btn" id="nextMonth" title="Next month">›</button>
+    </div>
+    <button class="pill-btn ghost" id="todayBtn">Today</button>
+    <button class="pill-btn ghost" id="insightsBtn">Insights</button>
+    <button class="pill-btn ghost sync-btn" id="syncBtn" title="Google Sheets sync">
+      <span class="sync-dot" id="syncDot"></span><span id="syncLabel">Sync</span>
+    </button>
+  </header>
+
+  <!-- ===== Hero stats ===== -->
+  <section class="hero">
+    <div class="stat-card glass income-card" id="incomeCard" title="Click to edit income">
+      <div class="stat-label">Income</div>
+      <div class="stat-value" id="incomeValue">R0</div>
+      <div class="stat-sub">this month · tap to edit</div>
+    </div>
+    <div class="stat-card glass">
+      <div class="stat-label">Spent so far</div>
+      <div class="stat-value" id="spentValue">R0</div>
+      <div class="stat-sub" id="spentSub">&nbsp;</div>
+    </div>
+    <div class="stat-card glass">
+      <div class="stat-label">Cash left</div>
+      <div class="stat-value" id="cashLeftValue">R0</div>
+      <div class="stat-sub">income − spent</div>
+    </div>
+    <div class="stat-card glass accent" id="freeCard">
+      <div class="stat-label">Truly free</div>
+      <div class="stat-value" id="freeValue">R0</div>
+      <div class="stat-sub">after all remaining budgets</div>
+    </div>
+  </section>
+
+  <div class="columns">
+
+    <!-- ===== Categories ===== -->
+    <section class="panel glass">
+      <div class="panel-head">
+        <h2>Budgets</h2>
+        <div class="panel-head-right">
+          <span class="muted" id="budgetTotalLabel"></span>
+          <button class="pill-btn" id="addCategoryBtn">+ Category</button>
+        </div>
+      </div>
+      <div class="cat-list" id="catList"></div>
+      <div class="empty-hint" id="catEmpty" hidden>
+        No budget categories yet.<br/>Add one to get started ✨
+      </div>
+    </section>
+
+    <!-- ===== Expenses ===== -->
+    <section class="panel glass">
+      <div class="panel-head">
+        <h2>Expenses</h2>
+        <div class="panel-head-right">
+          <button class="pill-btn ghost" id="importBtn">Import</button>
+          <button class="pill-btn" id="addExpenseBtn">+ Expense</button>
+        </div>
+      </div>
+      <div class="quick-add">
+        <input id="qa-amount" type="number" min="0" step="0.01" placeholder="R" title="Amount" />
+        <select id="qa-cat" title="Category"></select>
+        <input id="qa-note" type="text" placeholder="Note (optional) — Enter to add" title="Note" />
+        <button class="icon-btn" id="qa-add" title="Add expense">+</button>
+      </div>
+      <div class="search-row">
+        <input id="expenseSearch" type="text" placeholder="🔍 Search this month's expenses…" />
+      </div>
+      <div class="expense-list" id="expenseList"></div>
+      <div class="empty-hint" id="expEmpty" hidden>
+        Nothing spent yet this month 🎉
+      </div>
+    </section>
+
+  </div>
+
+  <!-- ===== Insights ===== -->
+  <section class="panel glass insights" id="insightsView" hidden>
+    <div class="panel-head">
+      <h2>Average spend per category</h2>
+      <div class="seg-control" id="periodSeg">
+        <button data-months="3" class="active">3 months</button>
+        <button data-months="6">6 months</button>
+        <button data-months="12">1 year</button>
+      </div>
+    </div>
+    <div class="insights-sub muted" id="insightsSub"></div>
+    <div class="insight-list" id="insightList"></div>
+    <div class="empty-hint" id="insightEmpty" hidden>
+      No expenses recorded in this period yet.
+    </div>
+  </section>
+
+<div class="import-backdrop" id="importBackdrop" hidden>
+  <div class="import-modal glass-heavy">
+    <h3>Import bank transactions</h3>
+    <div class="import-body" id="importBody"></div>
+    <div class="modal-actions">
+      <button class="pill-btn ghost" id="importCancel">Cancel</button>
+      <button class="pill-btn primary" id="importConfirm" hidden>Import selected</button>
+    </div>
+  </div>
+</div>
+</main>
+
+<!-- ===== Modal ===== -->
+<div class="modal-backdrop" id="modalBackdrop" hidden>
+  <div class="modal glass-heavy" id="modal">
+    <h3 id="modalTitle">Title</h3>
+    <div class="modal-body" id="modalBody"></div>
+    <div class="modal-actions">
+      <button class="pill-btn ghost" id="modalCancel">Cancel</button>
+      <button class="pill-btn danger" id="modalDelete" hidden>Delete</button>
+      <button class="pill-btn primary" id="modalSave">Save</button>
+    </div>
+  </div>
+</div>
+
+<script src="app.js"></script>
+</body>
+</html>
