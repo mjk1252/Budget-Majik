@@ -438,6 +438,55 @@ html, body {
 .field-row { display: flex; gap: 12px; }
 .field-row .field { flex: 1; }
 
+/* ============ Loans / IOUs ============ */
+.loan-section-label {
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+  color: var(--text-faint);
+  margin-top: 6px;
+}
+.loan-row {
+  padding: 12px 14px;
+  border-radius: var(--radius-sm);
+  background: rgba(255,255,255,0.05);
+  border: 1px solid rgba(255,255,255,0.09);
+}
+.loan-top {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+  font-size: 13.5px;
+}
+.loan-person { font-weight: 650; }
+.loan-amt { color: var(--text-dim); font-size: 12.5px; font-variant-numeric: tabular-nums; }
+.loan-note { font-size: 12px; color: var(--text-faint); margin-top: 3px; }
+.loan-status { font-size: 12.5px; font-weight: 600; color: var(--amber); margin-top: 6px; }
+.loan-status.settled { color: var(--green); }
+.loan-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 9px;
+  flex-wrap: wrap;
+}
+.loan-actions input {
+  padding: 6px 10px;
+  font-size: 12.5px;
+  font-family: inherit;
+  color: var(--text);
+  background: rgba(255,255,255,0.08);
+  border: 1px solid rgba(255,255,255,0.14);
+  border-radius: var(--radius-sm);
+  outline: none;
+}
+.loan-repay-amt { width: 90px; }
+.loan-repay-date { width: 132px; }
+.loan-delete { margin-top: 9px; opacity: 0.7; }
+.loan-delete:hover { opacity: 1; }
+
 /* ============ Sync ============ */
 .sync-btn { display: flex; align-items: center; gap: 8px; }
 .sync-dot {
@@ -569,6 +618,49 @@ html, body {
   box-shadow: 0 0 6px rgba(255,255,255,0.6);
 }
 .pace-note { margin-top: 7px; font-size: 11.5px; color: var(--amber); }
+
+/* ============ Pre-purchases ============ */
+.prep-strip {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 7px;
+  margin: 0 22px 10px;
+  padding: 10px 12px;
+  border-radius: var(--radius-md);
+  background: rgba(110, 231, 168, 0.07);
+  border: 1px solid rgba(110, 231, 168, 0.22);
+  flex-shrink: 0;
+}
+.prep-strip-label {
+  width: 100%;
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+  color: var(--green);
+}
+.prep-chip {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 6px;
+  padding: 5px 12px;
+  font-size: 12px;
+  font-family: inherit;
+  color: var(--text);
+  background: rgba(255,255,255,0.08);
+  border: 1px solid rgba(255,255,255,0.14);
+  border-radius: 999px;
+  cursor: pointer;
+  transition: background 0.15s ease;
+  font-variant-numeric: tabular-nums;
+}
+.prep-chip:hover { background: rgba(255,255,255,0.16); }
+.prep-chip b { font-weight: 700; }
+.prep-chip span { font-size: 11px; color: var(--text-faint); }
+
+.cat-prep-note { margin-top: 7px; font-size: 11.5px; color: var(--green); }
+.prep-tag { color: var(--green); }
 
 /* ============ Quick add + search ============ */
 .quick-add {

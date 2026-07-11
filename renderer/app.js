@@ -86,6 +86,33 @@ function applyRecurring() {
   return changed;
 }
 
+// Migrate pre-purchased expenses into their target month's real expense list
+// once the 1st of that month has arrived. Before that, they stay in the
+// purchase month with a `forMonth` flag and are only virtually attributed to
+// the target month (see incomingPrepurchases). Runs at boot, same as recurring.
+function applyPrepurchases() {
+  const now = new Date();
+  let changed = false;
+  for (const key of Object.keys(data.months)) {
+    const month = data.months[key];
+    if (!month.expenses.some((e) => e.forMonth)) continue;
+    const keep = [];
+    for (const exp of month.expenses) {
+      if (exp.forMonth && now >= firstOfMonthDate(exp.forMonth)) {
+        const target = editMonthFor(exp.forMonth);
+        delete exp.forMonth;
+        exp.prepurchased = true;
+        target.expenses.push(exp);
+        changed = true;
+      } else {
+        keep.push(exp);
+      }
+    }
+    month.expenses = keep;
+  }
+  return changed;
+}
+
 async function persist() {
   data.updatedAt = Date.now();
   await window.budgetStore.save(data);
@@ -135,7 +162,9 @@ async function pullFromSheets() {
       data.settings = keepSettings;
       await window.budgetStore.save(data);
       render();
-      if (applyRecurring()) persist();
+      const recurred = applyRecurring();
+      const prepurchased = applyPrepurchases();
+      if (recurred || prepurchased) persist();
     } else if ((data.updatedAt || 0) > (remote.updatedAt || 0)) {
       await window.budgetStore.syncPush(syncUrl(), data);
     }
@@ -207,12 +236,173 @@ $("syncBtn").onclick = () => {
   };
 };
 
+/* ---------- loans / IOUs ---------- */
+
+$("loansBtn").onclick = () => {
+  openModal({ title: "Loans & IOUs", saveLabel: "Done", body: "", onSave: () => {} });
+  renderLoansModal();
+};
+
+function loanRowHtml(loan) {
+  const out = loanOutstanding(loan);
+  const settled = out <= 0.004;
+  const today = new Date().toISOString().slice(0, 10);
+  return `
+    <div class="loan-row">
+      <div class="loan-top">
+        <span class="loan-person">${escapeHtml(loan.person || "Someone")}</span>
+        <span class="loan-amt">${fmt(loan.amount)} lent ${loan.date}</span>
+      </div>
+      ${loan.note ? `<div class="loan-note">${escapeHtml(loan.note)}</div>` : ""}
+      <div class="loan-status ${settled ? "settled" : ""}">${settled ? (loan.writtenOff ? "✕ written off" : "✓ settled") : `${fmt(out)} outstanding`}</div>
+      ${!settled ? `
+      <div class="loan-actions">
+        <input type="number" class="loan-repay-amt" min="0" step="0.01" value="${out}" data-id="${loan.id}" />
+        <input type="date" class="loan-repay-date" value="${today}" data-id="${loan.id}" />
+        <button class="mini-btn" data-act="repay" data-id="${loan.id}">Record repayment</button>
+        <button class="mini-btn" data-act="writeoff" data-id="${loan.id}">Write off</button>
+      </div>` : ""}
+      <button class="mini-btn loan-delete" data-act="delete" data-id="${loan.id}">Delete</button>
+    </div>`;
+}
+
+function renderLoansModal() {
+  const loans = data.loans || [];
+  const outstanding = loans.filter((l) => loanOutstanding(l) > 0.004);
+  const settled = loans.filter((l) => loanOutstanding(l) <= 0.004);
+
+  $("modalBody").innerHTML = `
+    <div class="hint">Money you lend reduces cash this month, without touching any budget. Repayments (even a bit extra) add cash back the month they land.</div>
+    <div class="field-row">
+      <div class="field"><label>Person</label><input id="ln-person" type="text" placeholder="Brother" /></div>
+      <div class="field" style="flex:0 0 120px"><label>Amount</label><input id="ln-amount" type="number" min="0" step="0.01" placeholder="0.00" /></div>
+    </div>
+    <div class="field-row">
+      <div class="field"><label>Date lent</label><input id="ln-date" type="date" value="${new Date().toISOString().slice(0, 10)}" /></div>
+      <div class="field"><label>Note <span style="text-transform:none;letter-spacing:0;opacity:0.6">(optional)</span></label><input id="ln-note" type="text" placeholder="For petrol" /></div>
+    </div>
+    <button type="button" class="pill-btn primary" id="ln-add" style="align-self:flex-start">+ Add loan</button>
+    ${outstanding.length ? `<div class="loan-section-label">Outstanding</div>${outstanding.map(loanRowHtml).join("")}` : `<div class="hint">No outstanding loans.</div>`}
+    ${settled.length ? `<div class="loan-section-label">Settled</div>${settled.map(loanRowHtml).join("")}` : ""}
+  `;
+
+  $("ln-add").onclick = () => {
+    const person = $("ln-person").value.trim();
+    const amount = parseFloat($("ln-amount").value);
+    const date = $("ln-date").value;
+    if (!person || !Number.isFinite(amount) || amount <= 0 || !date) return;
+    if (!data.loans) data.loans = [];
+    data.loans.push({
+      id: uid(), person, amount: Math.round(amount * 100) / 100,
+      date, note: $("ln-note").value.trim(), repayments: []
+    });
+    persist();
+    renderLoansModal();
+  };
+
+  $("modalBody").querySelectorAll('[data-act="repay"]').forEach((btn) => {
+    btn.onclick = () => {
+      const id = btn.dataset.id;
+      const loan = data.loans.find((l) => l.id === id);
+      const amtInput = $("modalBody").querySelector(`.loan-repay-amt[data-id="${id}"]`);
+      const dateInput = $("modalBody").querySelector(`.loan-repay-date[data-id="${id}"]`);
+      const amt = parseFloat(amtInput.value);
+      if (!Number.isFinite(amt) || amt <= 0 || !dateInput.value) return;
+      if (!loan.repayments) loan.repayments = [];
+      loan.repayments.push({ id: uid(), amount: Math.round(amt * 100) / 100, date: dateInput.value });
+      persist();
+      renderLoansModal();
+    };
+  });
+
+  $("modalBody").querySelectorAll('[data-act="writeoff"]').forEach((btn) => {
+    btn.onclick = () => {
+      const loan = data.loans.find((l) => l.id === btn.dataset.id);
+      loan.writtenOff = true;
+      persist();
+      renderLoansModal();
+    };
+  });
+
+  $("modalBody").querySelectorAll('[data-act="delete"]').forEach((btn) => {
+    btn.onclick = () => {
+      data.loans = data.loans.filter((l) => l.id !== btn.dataset.id);
+      persist();
+      renderLoansModal();
+    };
+  });
+}
+
+/* ---------- pre-purchases ---------- */
+
+// Month key arithmetic: "2026-07" -> "2026-08"
+function nextMonthOfKey(key) {
+  const y = Number(key.slice(0, 4)), mIdx = Number(key.slice(5, 7)) - 1;
+  return mIdx === 11 ? monthKey(y + 1, 0) : monthKey(y, mIdx + 1);
+}
+function monthLabelOf(key) {
+  return `${MONTH_NAMES[Number(key.slice(5, 7)) - 1]} ${key.slice(0, 4)}`;
+}
+function firstOfMonthDate(key) {
+  return new Date(Number(key.slice(0, 4)), Number(key.slice(5, 7)) - 1, 1);
+}
+
+// Expenses recorded in earlier months that were flagged as pre-purchases
+// for the given month. Cash-wise they belong to the month they were bought
+// in; budget-wise they belong here.
+function incomingPrepurchases(key) {
+  const out = [];
+  for (const [k, m] of Object.entries(data.months)) {
+    if (k === key) continue;
+    for (const e of m.expenses) {
+      if (e.forMonth === key) out.push({ exp: e, srcKey: k });
+    }
+  }
+  return out;
+}
+
+/* ---------- loans / IOUs ---------- */
+
+// A loan is money handed to someone else, expected back (maybe with a bit
+// extra). It reduces cash the month it's lent and adds cash back the month
+// each repayment lands — but never touches any category's budget, since it
+// isn't spending.
+function loanOutstanding(loan) {
+  if (loan.writtenOff) return 0;
+  const repaid = (loan.repayments || []).reduce((s, r) => s + r.amount, 0);
+  return Math.round((loan.amount - repaid) * 100) / 100;
+}
+function totalOutstandingLoans() {
+  return (data.loans || []).reduce((s, l) => s + Math.max(0, loanOutstanding(l)), 0);
+}
+function loansLentInMonth(key) {
+  return (data.loans || [])
+    .filter((l) => l.date.slice(0, 7) === key)
+    .reduce((s, l) => s + l.amount, 0);
+}
+function loansRepaidInMonth(key) {
+  let sum = 0;
+  for (const l of data.loans || []) {
+    for (const r of l.repayments || []) {
+      if (r.date.slice(0, 7) === key) sum += r.amount;
+    }
+  }
+  return sum;
+}
+
 /* ---------- derived numbers ---------- */
 
-function spentFor(month, catId) {
-  return month.expenses
-    .filter((e) => e.catId === catId)
+// Budget-relevant spend for a category in a month: this month's own expenses
+// (excluding ones pre-purchased for a later month) plus pre-purchases made in
+// earlier months that were allocated to this month.
+function spentFor(month, catId, key = currentKey()) {
+  const own = month.expenses
+    .filter((e) => e.catId === catId && (!e.forMonth || e.forMonth === key))
     .reduce((s, e) => s + e.amount, 0);
+  const incoming = incomingPrepurchases(key)
+    .filter((p) => p.exp.catId === catId)
+    .reduce((s, p) => s + p.exp.amount, 0);
+  return own + incoming;
 }
 
 // Effective remaining for a category. A manual re-evaluation ("override")
@@ -230,23 +420,50 @@ function render() {
   const month = getMonth();
   $("monthLabel").textContent = `${MONTH_NAMES[viewMonth]} ${viewYear}`;
 
-  const totalSpent = month.expenses.reduce((s, e) => s + e.amount, 0);
+  // Pre-purchases don't hit cash in the month they're bought — they're
+  // effectively bought on credit for next month, so they're excluded from
+  // this month's cash spend and added to the target month's instead.
+  const preBought = month.expenses
+    .filter((e) => e.forMonth)
+    .reduce((s, e) => s + e.amount, 0);
+  const preIncoming = incomingPrepurchases(currentKey())
+    .reduce((s, p) => s + p.exp.amount, 0);
+
+  const totalSpent = month.expenses.reduce((s, e) => s + e.amount, 0) - preBought + preIncoming;
   const totalBudget = month.categories.reduce((s, c) => s + c.budget, 0);
   const totalRemaining = month.categories.reduce((s, c) => s + Math.max(0, remainingFor(month, c)), 0);
-  const cashLeft = month.income - totalSpent;
-  const trulyFree = month.income - totalSpent - totalRemaining;
+
+  // Loans are cash out/in but never touch a category's budget.
+  const lentThisMonth = loansLentInMonth(currentKey());
+  const repaidThisMonth = loansRepaidInMonth(currentKey());
+  const netLoanCash = lentThisMonth - repaidThisMonth;
+
+  const cashLeft = month.income - totalSpent - netLoanCash;
+  const trulyFree = month.income - totalSpent - totalRemaining - netLoanCash;
 
   $("incomeValue").textContent = fmt(month.income);
   $("spentValue").textContent = fmt(totalSpent);
-  $("spentSub").textContent = totalBudget ? `of ${fmt(totalBudget)} budgeted` : " ";
+  $("spentSub").textContent = [
+    totalBudget ? `of ${fmt(totalBudget)} budgeted` : "",
+    preBought > 0 ? `🛒 ${fmt(preBought)} on credit for next month` : "",
+    preIncoming > 0 ? `incl. 🛒 ${fmt(preIncoming)} pre-purchased last month` : ""
+  ].filter(Boolean).join(" · ") || " ";
   const cashEl = $("cashLeftValue");
   cashEl.textContent = fmt(cashLeft);
   cashEl.className = "stat-value " + (cashLeft < 0 ? "neg" : "");
+  $("cashLeftSub").textContent = [
+    "income − spent",
+    lentThisMonth > 0 ? `🤝 ${fmt(lentThisMonth)} lent out` : "",
+    repaidThisMonth > 0 ? `🤝 ${fmt(repaidThisMonth)} repaid` : ""
+  ].filter(Boolean).join(" · ");
   const freeEl = $("freeValue");
   freeEl.textContent = fmt(trulyFree);
   freeEl.className = "stat-value " + (trulyFree < 0 ? "neg" : "pos");
 
   $("budgetTotalLabel").textContent = totalBudget ? `${fmt(totalBudget)} budgeted` : "";
+
+  const outstandingTotal = totalOutstandingLoans();
+  $("loansLabel").textContent = outstandingTotal > 0 ? `Loans (${fmt(outstandingTotal)})` : "Loans";
 
   renderCategories(month);
   renderExpenses(month);
@@ -262,8 +479,12 @@ function renderCategories(month) {
   const isCurrentMonth = now.getFullYear() === viewYear && now.getMonth() === viewMonth;
   const daysInMonth = new Date(viewYear, viewMonth + 1, 0).getDate();
   const monthElapsed = isCurrentMonth ? now.getDate() / daysInMonth : 0;
+  const incoming = incomingPrepurchases(currentKey());
 
   for (const cat of month.categories) {
+    const preAmt = incoming
+      .filter((p) => p.exp.catId === cat.id)
+      .reduce((s, p) => s + p.exp.amount, 0);
     const spent = spentFor(month, cat.id);
     const remaining = remainingFor(month, cat);
     const effectiveTotal = spent + Math.max(0, remaining);
@@ -289,6 +510,7 @@ function renderCategories(month) {
         ${isCurrentMonth ? `<div class="pace-mark" style="left:${(monthElapsed * 100).toFixed(1)}%" title="Today: ${Math.round(monthElapsed * 100)}% through the month"></div>` : ""}
       </div>
       ${cat.override ? `<div class="cat-adjust-note">✦ re-evaluated — remaining pinned (budget untouched)</div>` : ""}
+      ${preAmt > 0 ? `<div class="cat-prep-note">🛒 ${fmt(preAmt)} already pre-purchased in an earlier month (paid then, allocated here)</div>` : ""}
       ${aheadOfPace ? `<div class="pace-note">⚡ ${Math.round(spentFrac * 100)}% of budget used, but only ${Math.round(monthElapsed * 100)}% through the month</div>` : ""}
       <div class="cat-actions">
         <button class="mini-btn" data-act="reeval">Re-evaluate</button>
@@ -302,7 +524,31 @@ function renderCategories(month) {
 
 let expenseFilter = "";
 
+// Reminder strip: things already bought in an earlier month for this one.
+function renderPrepurchaseStrip(month) {
+  const strip = $("prepStrip");
+  const incoming = incomingPrepurchases(currentKey());
+  strip.hidden = !incoming.length;
+  strip.innerHTML = "";
+  if (!incoming.length) return;
+  const cats = Object.fromEntries(month.categories.map((c) => [c.id, c]));
+  const label = document.createElement("div");
+  label.className = "prep-strip-label";
+  label.textContent = "🛒 Already pre-purchased for this month";
+  strip.appendChild(label);
+  for (const { exp, srcKey } of incoming) {
+    const cat = cats[exp.catId];
+    const chip = document.createElement("button");
+    chip.className = "prep-chip";
+    chip.title = `Bought ${exp.date} — counted against ${cat ? cat.name : "a deleted category"}'s budget this month. Click to edit.`;
+    chip.innerHTML = `${cat ? cat.emoji || "📦" : "❔"} ${escapeHtml(exp.note || (cat ? cat.name : "Pre-purchase"))} <b>${fmt(exp.amount)}</b> <span>· bought ${monthLabelOf(srcKey).split(" ")[0].slice(0, 3)} ${Number(exp.date.slice(8, 10))}</span>`;
+    chip.onclick = () => openExpenseModal(exp, srcKey);
+    strip.appendChild(chip);
+  }
+}
+
 function renderExpenses(month) {
+  renderPrepurchaseStrip(month);
   const list = $("expenseList");
   list.innerHTML = "";
 
@@ -334,7 +580,7 @@ function renderExpenses(month) {
       <div class="expense-emoji">${cat ? cat.emoji || "📦" : "❔"}</div>
       <div class="expense-info">
         <div class="expense-note">${escapeHtml(exp.note || (cat ? cat.name : "Expense"))}</div>
-        <div class="expense-meta">${cat ? escapeHtml(cat.name) + " · " : ""}${day.toLocaleDateString("en-US", { month: "short", day: "numeric" })}${exp.recurringId ? " · ↻ recurring" : ""}</div>
+        <div class="expense-meta">${cat ? escapeHtml(cat.name) + " · " : ""}${day.toLocaleDateString("en-US", { month: "short", day: "numeric" })}${exp.recurringId ? " · ↻ recurring" : ""}${exp.forMonth ? ` · <span class="prep-tag">🛒 for ${escapeHtml(monthLabelOf(exp.forMonth))}</span>` : exp.prepurchased ? ` · <span class="prep-tag">🛒 pre-purchased</span>` : ""}</div>
       </div>
       <div class="expense-amount">${fmt(exp.amount)}</div>`;
     row.onclick = () => openExpenseModal(exp);
@@ -521,7 +767,11 @@ $("qa-add").onclick = quickAdd;
 $("qa-amount").addEventListener("keydown", (e) => { if (e.key === "Enter") quickAdd(); });
 $("qa-note").addEventListener("keydown", (e) => { if (e.key === "Enter") quickAdd(); });
 
-function openExpenseModal(exp) {
+// srcKey: the month the expense record actually lives in (differs from the
+// viewed month when editing a pre-purchase from its target month's strip).
+function openExpenseModal(exp, srcKey) {
+  const entryKey = srcKey || currentKey();
+  const targetKey = nextMonthOfKey(entryKey);
   const month = getMonth();
   if (!month.categories.length) {
     openModal({
@@ -551,7 +801,7 @@ function openExpenseModal(exp) {
         </div>
         <div class="field">
           <label>Date</label>
-          <input id="f-date" type="date" value="${defaultDate}" min="${currentKey()}-01" max="${currentKey()}-31" />
+          <input id="f-date" type="date" value="${defaultDate}" min="${entryKey}-01" max="${entryKey}-31" />
         </div>
       </div>
       <div class="field">
@@ -569,12 +819,19 @@ function openExpenseModal(exp) {
           ↻ Repeat monthly on this day
         </label>
         <div class="hint">Automatically logged each month once the day arrives (rent, subscriptions, insurance…).</div>
+      </div>
+      <div class="field">
+        <label style="display:flex;align-items:center;gap:8px;cursor:pointer;text-transform:none;letter-spacing:0;font-size:13px;color:var(--text)">
+          <input id="f-prepurchase" type="checkbox" style="width:auto" ${exp && exp.forMonth ? "checked" : ""} />
+          🛒 Pre-purchase for ${monthLabelOf(targetKey)}
+        </label>
+        <div class="hint">Bought early (on special etc.). Comes out of this month's cash, but counts against ${monthLabelOf(targetKey)}'s budget for this category — with a reminder shown there.</div>
       </div>`,
     onSave: () => {
       const amount = numVal("f-amount");
       const date = $("f-date").value;
       if (!Number.isFinite(amount) || amount <= 0 || !date) return false;
-      const m = editMonth();
+      const m = editMonthFor(entryKey);
       const catId = $("f-cat").value;
       const note = $("f-note").value.trim();
       const wantRecurring = $("f-recurring").checked;
@@ -592,6 +849,8 @@ function openExpenseModal(exp) {
       }
 
       if (entry) {
+        if ($("f-prepurchase").checked) entry.forMonth = targetKey;
+        else delete entry.forMonth;
         const catName = (m.categories.find((c) => c.id === catId) || {}).name || "";
         const day = Number(date.slice(8, 10));
         if (wantRecurring) {
@@ -610,7 +869,7 @@ function openExpenseModal(exp) {
       persist();
     },
     onDelete: exp ? () => {
-      const m = editMonth();
+      const m = editMonthFor(entryKey);
       m.expenses = m.expenses.filter((x) => x.id !== exp.id);
       // deleting a recurring instance also stops the rule, otherwise it
       // would just be re-created on the next launch
@@ -629,7 +888,12 @@ function openExpenseModal(exp) {
     const cat = month.categories.find((c) => c.id === $("f-cat").value);
     if (!cat) return 0;
     let rem = remainingFor(month, cat);
-    if (exp && exp.catId === cat.id) rem += exp.amount;
+    // add the expense's own amount back only if it counts against the viewed
+    // month's budget (not when it's a pre-purchase allocated elsewhere)
+    const countsHere = exp && (exp.forMonth
+      ? exp.forMonth === currentKey()
+      : entryKey === currentKey());
+    if (exp && exp.catId === cat.id && countsHere) rem += exp.amount;
     return Math.max(0, Math.round(rem * 100) / 100);
   };
   const refreshClaim = () => { claimBtn.textContent = `Claim remaining (${fmt(claimable())})`; };
@@ -1036,7 +1300,9 @@ $("todayBtn").onclick = () => {
   viewMonth = now.getMonth();
   data = (await window.budgetStore.load()) || { months: {} };
   if (!data.months) data.months = {};
-  if (applyRecurring()) { persist(); } else { render(); }
+  const recurred = applyRecurring();
+  const prepurchased = applyPrepurchases();
+  if (recurred || prepurchased) { persist(); } else { render(); }
   if (syncUrl()) setSyncStatus("busy", "Syncing…");
   pullFromSheets();
 })();

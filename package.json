@@ -27,6 +27,11 @@
     "nsis": {
       "oneClick": true,
       "deleteAppDataOnUninstall": false
+    },
+    "mac": {
+      "target": ["dmg", "zip"],
+      "category": "public.app-category.finance",
+      "identity": null
     }
   }
 }

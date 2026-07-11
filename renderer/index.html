@@ -28,6 +28,7 @@
       <button class="icon-btn" id="nextMonth" title="Next month">›</button>
     </div>
     <button class="pill-btn ghost" id="todayBtn">Today</button>
+    <button class="pill-btn ghost" id="loansBtn" title="Loans & IOUs">🤝 <span id="loansLabel">Loans</span></button>
     <button class="pill-btn ghost" id="insightsBtn">Insights</button>
     <button class="pill-btn ghost sync-btn" id="syncBtn" title="Google Sheets sync">
       <span class="sync-dot" id="syncDot"></span><span id="syncLabel">Sync</span>
@@ -49,7 +50,7 @@
     <div class="stat-card glass">
       <div class="stat-label">Cash left</div>
       <div class="stat-value" id="cashLeftValue">R0</div>
-      <div class="stat-sub">income − spent</div>
+      <div class="stat-sub" id="cashLeftSub">income − spent</div>
     </div>
     <div class="stat-card glass accent" id="freeCard">
       <div class="stat-label">Truly free</div>
@@ -84,6 +85,7 @@
           <button class="pill-btn" id="addExpenseBtn">+ Expense</button>
         </div>
       </div>
+      <div class="prep-strip" id="prepStrip" hidden></div>
       <div class="quick-add">
         <input id="qa-amount" type="number" min="0" step="0.01" placeholder="R" title="Amount" />
         <select id="qa-cat" title="Category"></select>
