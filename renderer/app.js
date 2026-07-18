@@ -24,7 +24,7 @@ function fmt(n) {
 /* ---------- data access ---------- */
 
 function emptyMonth() {
-  return { income: 0, categories: [], expenses: [] };
+  return { income: 0, categories: [], expenses: [], adjustments: [] };
 }
 
 // Find the latest saved month strictly before the given key, to inherit from.
@@ -46,7 +46,8 @@ function getMonthFor(key) {
     categories: prev.categories.map((c) => ({
       id: c.id, name: c.name, emoji: c.emoji, budget: c.budget, override: null
     })),
-    expenses: []
+    expenses: [],
+    adjustments: []
   };
 }
 const getMonth = () => getMonthFor(currentKey());
@@ -437,9 +438,10 @@ function render() {
   const lentThisMonth = loansLentInMonth(currentKey());
   const repaidThisMonth = loansRepaidInMonth(currentKey());
   const netLoanCash = lentThisMonth - repaidThisMonth;
+  const totalAdjustments = (month.adjustments || []).reduce((s, a) => s + a.amount, 0);
 
-  const cashLeft = month.income - totalSpent - netLoanCash;
-  const trulyFree = month.income - totalSpent - totalRemaining - netLoanCash;
+  const cashLeft = month.income - totalSpent - netLoanCash + totalAdjustments;
+  const trulyFree = month.income - totalSpent - totalRemaining - netLoanCash + totalAdjustments;
 
   $("incomeValue").textContent = fmt(month.income);
   $("spentValue").textContent = fmt(totalSpent);
@@ -454,7 +456,9 @@ function render() {
   $("cashLeftSub").textContent = [
     "income − spent",
     lentThisMonth > 0 ? `🤝 ${fmt(lentThisMonth)} lent out` : "",
-    repaidThisMonth > 0 ? `🤝 ${fmt(repaidThisMonth)} repaid` : ""
+    repaidThisMonth > 0 ? `🤝 ${fmt(repaidThisMonth)} repaid` : "",
+    totalAdjustments ? `${totalAdjustments > 0 ? "+" : ""}${fmt(totalAdjustments)} adjustments` : "",
+    "tap to adjust"
   ].filter(Boolean).join(" · ");
   const freeEl = $("freeValue");
   freeEl.textContent = fmt(trulyFree);
@@ -648,6 +652,64 @@ $("incomeCard").onclick = () => {
       persist();
     }
   });
+};
+
+/* ---------- cash adjustments ---------- */
+
+// One-off cash in/out for the month — a bonus, a gift, an unexpected bill —
+// that shouldn't change the planned monthly income baseline. Never carries
+// over to future months.
+function adjustmentRowHtml(adj) {
+  const pos = adj.amount >= 0;
+  return `
+    <div class="loan-row">
+      <div class="loan-top">
+        <span class="loan-person">${escapeHtml(adj.note || (pos ? "Extra cash" : "Extra cost"))}</span>
+        <span class="loan-amt">${pos ? "+" : ""}${fmt(adj.amount)}</span>
+      </div>
+      <button class="mini-btn loan-delete" data-act="delete-adj" data-id="${adj.id}">Delete</button>
+    </div>`;
+}
+
+function renderAdjustmentsModal() {
+  const month = getMonth();
+  const adjustments = month.adjustments || [];
+  $("modalBody").innerHTML = `
+    <div class="hint">Add a one-off amount to this month's cash left — a bonus, a gift, or an unexpected cost — without changing your planned income. Use a negative amount for money out.</div>
+    <div class="field-row">
+      <div class="field" style="flex:0 0 120px"><label>Amount</label><input id="adj-amount" type="number" step="0.01" placeholder="0.00" /></div>
+      <div class="field"><label>Note <span style="text-transform:none;letter-spacing:0;opacity:0.6">(optional)</span></label><input id="adj-note" type="text" placeholder="Birthday gift" /></div>
+    </div>
+    <button type="button" class="pill-btn primary" id="adj-add" style="align-self:flex-start">+ Add</button>
+    ${adjustments.length ? adjustments.map(adjustmentRowHtml).join("") : `<div class="hint">No adjustments yet this month.</div>`}
+  `;
+
+  $("adj-add").onclick = () => {
+    const amount = parseFloat($("adj-amount").value);
+    if (!Number.isFinite(amount) || amount === 0) return;
+    const m = editMonth();
+    if (!m.adjustments) m.adjustments = [];
+    m.adjustments.push({ id: uid(), amount: Math.round(amount * 100) / 100, note: $("adj-note").value.trim() });
+    persist();
+    renderAdjustmentsModal();
+  };
+
+  $("modalBody").querySelectorAll('[data-act="delete-adj"]').forEach((btn) => {
+    btn.onclick = () => {
+      const m = editMonth();
+      m.adjustments = (m.adjustments || []).filter((a) => a.id !== btn.dataset.id);
+      persist();
+      renderAdjustmentsModal();
+    };
+  });
+}
+
+const cashLeftCard = $("cashLeftValue").closest(".stat-card");
+cashLeftCard.classList.add("cash-left-card");
+cashLeftCard.title = "Click to add a one-off adjustment";
+cashLeftCard.onclick = () => {
+  openModal({ title: "Cash left adjustments", saveLabel: "Done", body: "", onSave: () => {} });
+  renderAdjustmentsModal();
 };
 
 /* ---------- categories ---------- */

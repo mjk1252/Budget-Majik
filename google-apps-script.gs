@@ -54,28 +54,54 @@ function remainingFor(month, cat) {
   return cat.budget - spent;
 }
 
+// Loans are cash out/in but never touch a category's budget — same rule as renderer/app.js.
+function loansLentInMonth(loans, key) {
+  return (loans || []).filter(function (l) { return l.date.slice(0, 7) === key; })
+    .reduce(function (s, l) { return s + l.amount; }, 0);
+}
+function loansRepaidInMonth(loans, key) {
+  var sum = 0;
+  (loans || []).forEach(function (l) {
+    (l.repayments || []).forEach(function (r) {
+      if (r.date.slice(0, 7) === key) sum += r.amount;
+    });
+  });
+  return sum;
+}
+
 function renderReadable(ss, data) {
   var monthKeys = Object.keys(data.months || {}).sort().reverse();
 
   // --- Overview sheet ---
   var ov = ss.getSheetByName('Overview') || ss.insertSheet('Overview', 0);
   ov.clearContents();
-  var rows = [['Month', 'Category', 'Budget', 'Spent', 'Remaining', 'Re-evaluated', '', 'Income', 'Total spent', 'Cash left']];
+  var rows = [['Month', 'Category', 'Budget', 'Spent', 'Remaining', 'Re-evaluated', '', 'Income', 'Total spent', 'Loans net', 'Adjustments', 'Cash left', 'Adjustment notes']];
   monthKeys.forEach(function (key) {
     var m = data.months[key];
     var totalSpent = m.expenses.reduce(function (s, ex) { return s + ex.amount; }, 0);
+    var netLoanCash = loansLentInMonth(data.loans, key) - loansRepaidInMonth(data.loans, key);
+    var adjustments = m.adjustments || [];
+    var totalAdjustments = adjustments.reduce(function (s, a) { return s + a.amount; }, 0);
+    var adjustmentNotes = adjustments.map(function (a) {
+      return (a.amount >= 0 ? '+' : '') + a.amount + (a.note ? ' (' + a.note + ')' : '');
+    }).join('; ');
+    var cashLeft = m.income - totalSpent - netLoanCash + totalAdjustments;
     var first = true;
     m.categories.forEach(function (c) {
       rows.push([
         key, c.name, c.budget, spentFor(m, c.id), remainingFor(m, c),
         c.override ? 'yes' : '',
         '',
-        first ? m.income : '', first ? totalSpent : '', first ? m.income - totalSpent : ''
+        first ? m.income : '', first ? totalSpent : '',
+        first ? netLoanCash : '', first ? totalAdjustments : '', first ? cashLeft : '',
+        first ? adjustmentNotes : ''
       ]);
       first = false;
     });
-    if (!m.categories.length) rows.push([key, '(no categories)', '', '', '', '', '', m.income, totalSpent, m.income - totalSpent]);
-    rows.push(['', '', '', '', '', '', '', '', '', '']);
+    if (!m.categories.length) {
+      rows.push([key, '(no categories)', '', '', '', '', '', m.income, totalSpent, netLoanCash, totalAdjustments, cashLeft, adjustmentNotes]);
+    }
+    rows.push(['', '', '', '', '', '', '', '', '', '', '', '', '']);
   });
   ov.getRange(1, 1, rows.length, rows[0].length).setValues(rows);
   ov.getRange(1, 1, 1, rows[0].length).setFontWeight('bold');

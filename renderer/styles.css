@@ -189,6 +189,8 @@ html, body {
 }
 .stat-card.income-card { cursor: pointer; }
 .stat-card.income-card:hover { transform: translateY(-2px); background: var(--glass-bg-strong); }
+.stat-card.cash-left-card { cursor: pointer; }
+.stat-card.cash-left-card:hover { transform: translateY(-2px); background: var(--glass-bg-strong); }
 .stat-label {
   font-size: 12px;
   font-weight: 600;
