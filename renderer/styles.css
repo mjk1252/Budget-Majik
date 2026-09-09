@@ -768,5 +768,11 @@ html, body {
 }
 .import-table select option { background: #1c2034; }
 .import-table select.learned { border-color: rgba(110,231,168,0.45); }
+.import-table select.match-action {
+  display: block;
+  max-width: 190px;
+  margin-top: 4px;
+  border-color: rgba(110,231,168,0.45);
+}
 .import-desc { max-width: 260px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .import-note { font-size: 12px; color: var(--text-faint); line-height: 1.6; }

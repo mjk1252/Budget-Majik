@@ -1138,6 +1138,8 @@ function showColumnMapping() {
 const normDesc = (s) => String(s).toLowerCase().replace(/\d+/g, "").replace(/[^\w\s]/g, " ").replace(/\s+/g, " ").trim().slice(0, 60);
 
 const SKIP_CAT = "__skip__"; // learned marker: "this is a transfer, not spend"
+const IMPORT_RECONCILE_TOLERANCE = 1;
+const IMPORT_RECONCILE_DAY_WINDOW = 7;
 
 // inter-account transfers between the user's own accounts are not spending
 const looksLikeTransfer = (desc) =>
@@ -1154,12 +1156,46 @@ function rememberedCategory(desc) {
   return null;
 }
 
+function importDayDifference(a, b) {
+  const left = Date.parse(a + "T00:00:00Z");
+  const right = Date.parse(b + "T00:00:00Z");
+  return Math.abs(left - right) / 86400000;
+}
+
+// Match each statement row to at most one existing expense. Exact same-day
+// matches are skipped as duplicates. Close amounts captured within a week are
+// offered for reconciliation because manual-entry and bank posting dates can
+// differ.
+function findImportMatch(existing, date, amount, desc, claimedIds) {
+  if (!existing) return null;
+  const candidates = (existing.expenses || [])
+    .filter((e) => !claimedIds.has(e.id))
+    .map((e) => ({
+      expense: e,
+      difference: Math.abs(e.amount - amount),
+      dayDifference: importDayDifference(e.date, date),
+      description: e.bankDescription || e.note || ""
+    }));
+  const exact = candidates.find((c) =>
+    c.dayDifference === 0 && c.difference < 0.005 && normDesc(c.description) === normDesc(desc));
+  if (exact) return { expense: exact.expense, duplicate: true };
+  const close = candidates
+    .filter((c) => c.difference <= IMPORT_RECONCILE_TOLERANCE &&
+      c.dayDifference <= IMPORT_RECONCILE_DAY_WINDOW)
+    .sort((a, b) => a.difference - b.difference || a.dayDifference - b.dayDifference)[0];
+  return close ? { expense: close.expense, duplicate: false } : null;
+}
+
 function buildTxnTable(body) {
   const dc = Number($("col-date").value), xc = Number($("col-desc").value), ac = Number($("col-amount").value);
   const month = getMonth();
-  const catByName = new Map(month.categories.map((c) => [c.name.toLowerCase(), c]));
+  const statementHasNegativeAmounts = body.some((r) => {
+    const value = parseImportAmount(r[ac] || "");
+    return value !== null && value < 0;
+  });
 
   const txns = [];
+  const claimedExpenseIds = new Set();
   for (const r of body) {
     const date = parseImportDate(r[dc] || "");
     const amt = parseImportAmount(r[ac] || "");
@@ -1167,20 +1203,25 @@ function buildTxnTable(body) {
     const desc = (r[xc] || "").trim();
     const key = date.slice(0, 7);
     const existing = data.months[key];
-    const dup = existing && existing.expenses.some((e) =>
-      e.date === date && Math.abs(e.amount - Math.abs(amt)) < 0.005 && (e.note || "") === desc);
     const remembered = rememberedCategory(desc);
     const transfer = remembered === SKIP_CAT || (!remembered && looksLikeTransfer(desc));
+    const debit = amt < 0 || !statementHasNegativeAmounts;
+    const match = debit && !transfer
+      ? findImportMatch(existing, date, Math.abs(amt), desc, claimedExpenseIds)
+      : null;
+    if (match) claimedExpenseIds.add(match.expense.id);
+    const dup = !!(match && match.duplicate);
+    const matchedCategory = match && (existing.categories || []).find((c) => c.id === match.expense.catId);
     txns.push({
-      date, desc, amount: Math.abs(amt), credit: amt > 0, dup, transfer,
-      include: amt < 0 && !dup && !transfer,
-      catName: transfer ? SKIP_CAT : (remembered || ""),
-      learned: !!remembered
+      date, desc, amount: Math.abs(amt), credit: !debit, dup, transfer,
+      include: debit && !dup && !transfer,
+      catName: transfer ? SKIP_CAT : ((matchedCategory && matchedCategory.name) || remembered || ""),
+      learned: !!remembered,
+      matchExpId: match && !dup ? match.expense.id : null,
+      matchAmount: match && !dup ? match.expense.amount : null,
+      matchDate: match && !dup ? match.expense.date : null,
+      reconcile: !!(match && !dup)
     });
-  }
-  // if the bank exports debits as positive (no negatives at all), include everything
-  if (txns.length && !txns.some((t) => !t.credit)) {
-    txns.forEach((t) => { t.credit = false; t.include = !t.dup; });
   }
   importState.txns = txns;
 
@@ -1199,6 +1240,7 @@ function buildTxnTable(body) {
   $("importBody").innerHTML = `
     <div class="import-note">
       ${txns.length} transactions. Debits are pre-selected; credits (money in) and rows matching an existing expense (duplicates) start unticked.
+      Expenses within ${fmt(IMPORT_RECONCILE_TOLERANCE)} and ${IMPORT_RECONCILE_DAY_WINDOW} days are suggested as matches; choose whether to update the existing entry or import separately.
       <span style="color:var(--green)">Green</span> category boxes were filled from what you chose before.
     </div>
     <table class="import-table">
@@ -1208,7 +1250,7 @@ function buildTxnTable(body) {
         <tr class="${t.include ? "" : "skip"}" data-i="${i}">
           <td><input type="checkbox" data-i="${i}" class="inc" ${t.include ? "checked" : ""} /></td>
           <td style="white-space:nowrap">${t.date}</td>
-          <td class="import-desc" title="${escapeHtml(t.desc)}">${escapeHtml(t.desc) || "<i>(no description)</i>"}${t.dup ? ' <span style="color:var(--amber)">· duplicate?</span>' : ""}${t.credit ? ' <span style="color:var(--green)">· money in</span>' : ""}${t.transfer ? ' <span style="color:var(--accent)">· transfer</span>' : ""}</td>
+          <td class="import-desc" title="${escapeHtml(t.desc)}">${escapeHtml(t.desc) || "<i>(no description)</i>"}${t.dup ? ' <span style="color:var(--amber)">· duplicate?</span>' : ""}${t.matchExpId ? `<select class="match-action" data-i="${i}"><option value="reconcile">Update ${fmt(t.matchAmount)} from ${t.matchDate}</option><option value="new">Import separately</option></select>` : ""}${t.credit ? ' <span style="color:var(--green)">· money in</span>' : ""}${t.transfer ? ' <span style="color:var(--accent)">· transfer</span>' : ""}</td>
           <td class="num">${fmt(t.amount)}</td>
           <td><select class="rowcat ${t.learned ? "learned" : ""}" data-i="${i}">${catOpts(t.catName)}</select></td>
         </tr>`).join("")}
@@ -1240,6 +1282,11 @@ function buildTxnTable(body) {
       }
     };
   });
+  $("importBody").querySelectorAll(".match-action").forEach((sel) => {
+    sel.onchange = () => {
+      importState.txns[Number(sel.dataset.i)].reconcile = sel.value === "reconcile";
+    };
+  });
   $("importConfirm").hidden = false;
 }
 
@@ -1264,10 +1311,20 @@ $("importConfirm").onclick = () => {
       cat = { id: uid(), name: t.catName, emoji: "", budget: 0, override: null };
       m.categories.push(cat);
     }
-    m.expenses.push({
-      id: uid(), catId: cat.id, amount: t.amount, note: t.desc,
-      date: t.date, createdAt: Date.now()
-    });
+    const matched = t.reconcile && t.matchExpId && m.expenses.find((e) => e.id === t.matchExpId);
+    if (matched) {
+      matched.amount = t.amount;
+      matched.catId = cat.id;
+      if (!matched.note) matched.note = t.desc;
+      matched.bankDescription = t.desc;
+      matched.importedFromStatement = true;
+    } else {
+      m.expenses.push({
+        id: uid(), catId: cat.id, amount: t.amount, note: t.desc,
+        date: t.date, createdAt: Date.now(), bankDescription: t.desc,
+        importedFromStatement: true
+      });
+    }
     const n = normDesc(t.desc);
     if (n) data.catMemory[n] = t.catName;
   }
