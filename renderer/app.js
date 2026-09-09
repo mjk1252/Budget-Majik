@@ -462,6 +462,7 @@ function render() {
   const totalAdjustments = (month.adjustments || []).reduce((s, a) => s + a.amount, 0);
 
   const cashLeft = month.income - totalSpent - netLoanCash + totalAdjustments;
+  const bankTarget = cashLeft - preBought;
   const trulyFree = month.income - totalSpent - totalRemaining - netLoanCash + totalAdjustments;
 
   $("incomeValue").textContent = fmt(month.income);
@@ -481,6 +482,12 @@ function render() {
     totalAdjustments ? `${totalAdjustments > 0 ? "+" : ""}${fmt(totalAdjustments)} adjustments` : "",
     "tap to adjust"
   ].filter(Boolean).join(" · ");
+  const bankTargetEl = $("bankTargetValue");
+  bankTargetEl.textContent = fmt(bankTarget);
+  bankTargetEl.className = "stat-value " + (bankTarget < 0 ? "neg" : "");
+  $("bankTargetSub").textContent = preBought > 0
+    ? `cash left − ${fmt(preBought)} allocated ahead`
+    : "same as cash left · nothing allocated ahead";
   const freeEl = $("freeValue");
   freeEl.textContent = fmt(trulyFree);
   freeEl.className = "stat-value " + (trulyFree < 0 ? "neg" : "pos");
