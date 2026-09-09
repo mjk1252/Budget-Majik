@@ -160,7 +160,10 @@ async function pushToSheets() {
   return succeeded;
 }
 
-// On launch: pull remote and adopt it if it's newer than local (last write wins).
+// On launch (and whenever a sync URL is selected), an existing Sheet is the
+// source of truth. Browser localStorage may contain a later timestamp from a
+// stale or previously disconnected session, so it must never win merely by
+// opening the page.
 async function pullFromSheets() {
   if (!syncUrl()) return;
   syncReady = false;
@@ -170,7 +173,7 @@ async function pullFromSheets() {
     const remoteRevision = (remote && remote.updatedAt) || 0;
     const hasRemoteData = remote && remote.months &&
       (Object.keys(remote.months).length > 0 || remoteRevision > 0);
-    if (hasRemoteData && remoteRevision >= (data.updatedAt || 0)) {
+    if (hasRemoteData) {
       const keepSettings = data.settings;
       data = remote;
       data.settings = keepSettings;
@@ -181,7 +184,9 @@ async function pullFromSheets() {
       syncRemoteUpdatedAt = remoteRevision;
     }
     syncReady = true;
-    if (!hasRemoteData || (data.updatedAt || 0) > remoteRevision) {
+    // Seed a genuinely empty Sheet from this browser. Never auto-upload over
+    // an existing Sheet during startup, regardless of timestamp ordering.
+    if (!hasRemoteData) {
       await pushToSheets();
     } else {
       setSyncStatus("ok", "Synced");
