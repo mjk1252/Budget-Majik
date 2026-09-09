@@ -28,6 +28,25 @@ function doPost(e) {
 
   var ss = SpreadsheetApp.getActiveSpreadsheet();
   var sh = ss.getSheetByName('_data') || ss.insertSheet('_data');
+  // Reject stale clients rather than silently overwriting newer sheet data.
+  // The app supplies the revision it observed on its most recent pull.
+  var expected = e.parameter && e.parameter.expectedUpdatedAt;
+  if (expected !== undefined && expected !== '') {
+    var current = '{"months":{}}';
+    if (sh.getLastRow() > 0) {
+      current = sh.getRange(1, 1, sh.getLastRow(), 1).getValues()
+        .map(function (r) { return r[0]; }).join('');
+    }
+    var currentData = JSON.parse(current);
+    var currentRevision = Number(currentData.updatedAt || 0);
+    if (currentRevision !== Number(expected)) {
+      return ContentService.createTextOutput(JSON.stringify({
+        ok: false,
+        conflict: true,
+        error: 'The Google Sheet changed on another device. Local data was not uploaded.'
+      })).setMimeType(ContentService.MimeType.JSON);
+    }
+  }
   sh.clearContents();
   var rows = [];
   for (var i = 0; i < json.length; i += CHUNK) rows.push([json.slice(i, i + CHUNK)]);

@@ -73,14 +73,26 @@ ipcMain.handle('sync:pull', async (_e, url) => {
   if (!res.ok) throw new Error('HTTP ' + res.status);
   return await res.json();
 });
-ipcMain.handle('sync:push', async (_e, url, payload) => {
-  const res = await fetch(url, {
+ipcMain.handle('sync:push', async (_e, url, payload, expectedUpdatedAt) => {
+  const target = new URL(url);
+  // The server uses this value as an optimistic-lock revision.  It prevents a
+  // stale installation from replacing data it has not first read.
+  if (expectedUpdatedAt !== undefined && expectedUpdatedAt !== null) {
+    target.searchParams.set('expectedUpdatedAt', String(expectedUpdatedAt));
+  }
+  const res = await fetch(target, {
     method: 'POST',
     headers: { 'Content-Type': 'text/plain' },
     body: JSON.stringify(payload),
     redirect: 'follow'
   });
   if (!res.ok) throw new Error('HTTP ' + res.status);
+  const result = await res.json();
+  if (!result.ok) {
+    const err = new Error(result.error || 'Sync was rejected');
+    err.code = result.conflict ? 'SYNC_CONFLICT' : 'SYNC_REJECTED';
+    throw err;
+  }
   return true;
 });
 

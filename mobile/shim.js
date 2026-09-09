@@ -69,14 +69,24 @@ window.budgetStore = {
     return await res.json();
   },
 
-  syncPush: async (url, data) => {
-    const res = await fetch(url, {
+  syncPush: async (url, data, expectedUpdatedAt) => {
+    const target = new URL(url);
+    if (expectedUpdatedAt !== undefined && expectedUpdatedAt !== null) {
+      target.searchParams.set("expectedUpdatedAt", String(expectedUpdatedAt));
+    }
+    const res = await fetch(target, {
       method: "POST",
       headers: { "Content-Type": "text/plain" },
       body: JSON.stringify(data),
       redirect: "follow"
     });
     if (!res.ok) throw new Error("HTTP " + res.status);
+    const result = await res.json();
+    if (!result.ok) {
+      const err = new Error(result.error || "Sync was rejected");
+      err.code = result.conflict ? "SYNC_CONFLICT" : "SYNC_REJECTED";
+      throw err;
+    }
     return true;
   },
 

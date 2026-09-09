@@ -125,6 +125,8 @@ async function persist() {
 
 let syncBusy = false;
 let syncQueued = false;
+let syncReady = false;
+let syncRemoteUpdatedAt = null;
 
 function syncUrl() {
   return (data.settings && data.settings.syncUrl) || "";
@@ -137,39 +139,53 @@ function setSyncStatus(state, label) {
 
 async function pushToSheets() {
   if (!syncUrl()) return;
+  // Never allow a background save (such as a recurring item) to win a race
+  // against the first pull after launch.
+  if (!syncReady) { syncQueued = true; return; }
   if (syncBusy) { syncQueued = true; return; }
   syncBusy = true;
+  let succeeded = false;
   setSyncStatus("busy", "Syncing…");
   try {
-    await window.budgetStore.syncPush(syncUrl(), data);
+    await window.budgetStore.syncPush(syncUrl(), data, syncRemoteUpdatedAt);
+    syncRemoteUpdatedAt = data.updatedAt || 0;
+    succeeded = true;
     setSyncStatus("ok", "Synced");
   } catch (err) {
     console.error("sync push failed", err);
-    setSyncStatus("error", "Sync failed");
+    setSyncStatus("error", err.code === "SYNC_CONFLICT" ? "Sync conflict" : "Sync failed");
   }
   syncBusy = false;
   if (syncQueued) { syncQueued = false; pushToSheets(); }
+  return succeeded;
 }
 
 // On launch: pull remote and adopt it if it's newer than local (last write wins).
 async function pullFromSheets() {
   if (!syncUrl()) return;
+  syncReady = false;
   setSyncStatus("busy", "Syncing…");
   try {
     const remote = await window.budgetStore.syncPull(syncUrl());
-    if (remote && remote.months && (remote.updatedAt || 0) > (data.updatedAt || 0)) {
+    const remoteRevision = (remote && remote.updatedAt) || 0;
+    const hasRemoteData = remote && remote.months &&
+      (Object.keys(remote.months).length > 0 || remoteRevision > 0);
+    if (hasRemoteData && remoteRevision >= (data.updatedAt || 0)) {
       const keepSettings = data.settings;
       data = remote;
       data.settings = keepSettings;
       await window.budgetStore.save(data);
       render();
-      const recurred = applyRecurring();
-      const prepurchased = applyPrepurchases();
-      if (recurred || prepurchased) persist();
-    } else if ((data.updatedAt || 0) > (remote.updatedAt || 0)) {
-      await window.budgetStore.syncPush(syncUrl(), data);
+      syncRemoteUpdatedAt = remoteRevision;
+    } else {
+      syncRemoteUpdatedAt = remoteRevision;
     }
-    setSyncStatus("ok", "Synced");
+    syncReady = true;
+    if (!hasRemoteData || (data.updatedAt || 0) > remoteRevision) {
+      await pushToSheets();
+    } else {
+      setSyncStatus("ok", "Synced");
+    }
   } catch (err) {
     console.error("sync pull failed", err);
     setSyncStatus("error", "Sync failed");
@@ -1362,9 +1378,11 @@ $("todayBtn").onclick = () => {
   viewMonth = now.getMonth();
   data = (await window.budgetStore.load()) || { months: {} };
   if (!data.months) data.months = {};
+  if (syncUrl()) {
+    setSyncStatus("busy", "Syncing…");
+    await pullFromSheets();
+  }
   const recurred = applyRecurring();
   const prepurchased = applyPrepurchases();
   if (recurred || prepurchased) { persist(); } else { render(); }
-  if (syncUrl()) setSyncStatus("busy", "Syncing…");
-  pullFromSheets();
 })();

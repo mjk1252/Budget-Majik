@@ -32,9 +32,9 @@ Do this once. Afterwards, every PC just needs the URL pasted into the app.
 
 ## How it works
 
-- Every change you make is pushed to the sheet automatically; on launch, the app pulls the latest version (newest edit wins).
+- Every change you make is pushed to the sheet automatically. The app always completes its first pull before it can save local changes. Each upload also carries the revision last read from the sheet, so a stale device cannot silently replace changes made elsewhere; it reports a sync conflict instead.
 - The **Overview** and **Expenses** tabs in the sheet are a readable view of your data, regenerated on each sync. **Edits made directly in the sheet are not synced back** — the app is the source of truth. (The raw data lives in a hidden `_data` tab; don't edit that.)
 
 ## Updating the script later
 
-If the script ever changes, paste the new version and use **Deploy → Manage deployments → ✏️ edit → Version: New version → Deploy**. This keeps the same URL. (A brand-new deployment gets a new URL and you'd have to re-paste it in the app.)
+If the script ever changes, paste the new version and use **Deploy → Manage deployments → ✏️ edit → Version: New version → Deploy**. This keeps the same URL. (A brand-new deployment gets a new URL and you'd have to re-paste it in the app.) This is required when updating the app's sync safeguards too.
