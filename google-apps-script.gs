@@ -10,6 +10,14 @@
 
 var CHUNK = 40000; // stay under the 50k chars-per-cell limit
 
+// Run this once from the Apps Script editor, then copy the token from the
+// execution log into the iPhone Shortcut. Running it again replaces the token.
+function createShortcutToken() {
+  var token = Utilities.getUuid() + Utilities.getUuid();
+  PropertiesService.getScriptProperties().setProperty('SHORTCUT_TOKEN', token);
+  Logger.log('SHORTCUT_TOKEN=' + token);
+}
+
 function doGet() {
   var ss = SpreadsheetApp.getActiveSpreadsheet();
   var sh = ss.getSheetByName('_data');
@@ -25,6 +33,11 @@ function doGet() {
 function doPost(e) {
   var json = e.postData.contents;
   var data = JSON.parse(json); // throws on bad payload → error returned to app
+
+  // Small, locked mutation used by the iPhone Shortcut. Normal app sync posts
+  // the complete data object and continues through the code below.
+  if (data.action === 'getCategories') return getShortcutCategories_(data);
+  if (data.action === 'addExpense') return addShortcutExpense_(data);
 
   var ss = SpreadsheetApp.getActiveSpreadsheet();
   var sh = ss.getSheetByName('_data') || ss.insertSheet('_data');
@@ -62,6 +75,146 @@ function doPost(e) {
 
   return ContentService.createTextOutput('{"ok":true}')
     .setMimeType(ContentService.MimeType.JSON);
+}
+
+/** Return category names for a month without exposing the rest of the budget. */
+function getShortcutCategories_(request) {
+  var configuredToken = PropertiesService.getScriptProperties().getProperty('SHORTCUT_TOKEN');
+  if (!configuredToken || request.token !== configuredToken) {
+    return jsonResponse_({ ok: false, error: 'Not authorised.' });
+  }
+  var monthKey = String(request.month || '');
+  if (!/^\d{4}-\d{2}$/.test(monthKey)) {
+    return jsonResponse_({ ok: false, error: 'Invalid month.' });
+  }
+
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var sh = ss.getSheetByName('_data');
+  var stored = readData_(sh);
+  stored.months = stored.months || {};
+  var month = materializeMonth_(stored, monthKey);
+  var names = (month.categories || []).map(function (category) {
+    return String(category.name || '').trim();
+  }).filter(function (name) { return !!name; });
+  return jsonResponse_({ ok: true, categories: names });
+}
+
+/** Add one bank transaction, optionally split across multiple categories. */
+function addShortcutExpense_(request) {
+  var configuredToken = PropertiesService.getScriptProperties().getProperty('SHORTCUT_TOKEN');
+  if (!configuredToken || request.token !== configuredToken) {
+    return jsonResponse_({ ok: false, error: 'Not authorised.' });
+  }
+
+  var amount = money_(request.amount);
+  var merchant = String(request.merchant || '').trim();
+  var transactionDate = String(request.transactionDate || '');
+  var transactionMonth = transactionDate.slice(0, 7);
+  var budgetMonth = String(request.budgetMonth || transactionMonth);
+  var sourceId = String(request.sourceId || '').trim();
+  var splits = request.splits;
+
+  if (!(amount > 0) || !merchant || !/^\d{4}-\d{2}-\d{2}$/.test(transactionDate) ||
+      !/^\d{4}-\d{2}$/.test(budgetMonth) || !sourceId || !Array.isArray(splits) || !splits.length) {
+    return jsonResponse_({ ok: false, error: 'Missing or invalid transaction details.' });
+  }
+
+  var splitTotal = 0;
+  for (var i = 0; i < splits.length; i++) {
+    splits[i].category = String(splits[i].category || '').trim();
+    splits[i].amount = money_(splits[i].amount);
+    if (!splits[i].category || !(splits[i].amount > 0)) {
+      return jsonResponse_({ ok: false, error: 'Every category split needs a positive amount.' });
+    }
+    splitTotal += splits[i].amount;
+  }
+  if (Math.abs(splitTotal - amount) > 0.009) {
+    return jsonResponse_({ ok: false, error: 'Category amounts do not add up to the transaction total.' });
+  }
+
+  var lock = LockService.getDocumentLock();
+  lock.waitLock(30000);
+  try {
+    var ss = SpreadsheetApp.getActiveSpreadsheet();
+    var sh = ss.getSheetByName('_data') || ss.insertSheet('_data');
+    var stored = readData_(sh);
+    stored.months = stored.months || {};
+    var month = materializeMonth_(stored, transactionMonth);
+
+    var duplicate = Object.keys(stored.months).some(function (key) {
+      return (stored.months[key].expenses || []).some(function (expense) {
+        return expense.shortcutSourceId === sourceId;
+      });
+    });
+    if (duplicate) return jsonResponse_({ ok: true, duplicate: true });
+
+    var addedAt = Date.now();
+    for (var j = 0; j < splits.length; j++) {
+      var wanted = splits[j].category.toLowerCase();
+      var category = (month.categories || []).filter(function (candidate) {
+        return String(candidate.name || '').toLowerCase() === wanted;
+      })[0];
+      if (!category) {
+        return jsonResponse_({ ok: false, error: 'Unknown category: ' + splits[j].category });
+      }
+      var expense = {
+        id: Utilities.getUuid(), catId: category.id, amount: splits[j].amount,
+        note: merchant, date: transactionDate, createdAt: addedAt,
+        shortcutSourceId: sourceId, bankDescription: merchant
+      };
+      if (budgetMonth !== transactionMonth) expense.forMonth = budgetMonth;
+      month.expenses.push(expense);
+    }
+
+    stored.updatedAt = Date.now();
+    writeData_(sh, stored);
+    renderReadable(ss, stored);
+    return jsonResponse_({ ok: true, added: splits.length, updatedAt: stored.updatedAt });
+  } catch (error) {
+    return jsonResponse_({ ok: false, error: String(error.message || error) });
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+function money_(value) {
+  return Math.round(Number(String(value).replace(/,/g, '')) * 100) / 100;
+}
+
+function jsonResponse_(value) {
+  return ContentService.createTextOutput(JSON.stringify(value))
+    .setMimeType(ContentService.MimeType.JSON);
+}
+
+function readData_(sheet) {
+  if (!sheet || sheet.getLastRow() < 1) return { months: {} };
+  var json = sheet.getRange(1, 1, sheet.getLastRow(), 1).getValues()
+    .map(function (row) { return row[0]; }).join('');
+  return JSON.parse(json || '{"months":{}}');
+}
+
+function writeData_(sheet, data) {
+  var json = JSON.stringify(data);
+  var rows = [];
+  for (var i = 0; i < json.length; i += CHUNK) rows.push([json.slice(i, i + CHUNK)]);
+  sheet.clearContents();
+  sheet.getRange(1, 1, rows.length, 1).setValues(rows);
+  sheet.hideSheet();
+}
+
+function materializeMonth_(data, key) {
+  if (data.months[key]) return data.months[key];
+  var earlier = Object.keys(data.months).filter(function (candidate) { return candidate < key; }).sort();
+  var previous = earlier.length ? data.months[earlier[earlier.length - 1]] : null;
+  data.months[key] = previous ? {
+    income: previous.income,
+    categories: (previous.categories || []).map(function (category) {
+      return { id: category.id, name: category.name, emoji: category.emoji,
+        budget: category.budget, override: null };
+    }),
+    expenses: [], adjustments: []
+  } : { income: 0, categories: [], expenses: [], adjustments: [] };
+  return data.months[key];
 }
 
 /* ---------- pretty, read-only views ---------- */
