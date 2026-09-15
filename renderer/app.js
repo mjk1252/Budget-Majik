@@ -163,10 +163,14 @@ async function pushToSheets() {
   if (syncBusy) { syncQueued = true; return; }
   syncBusy = true;
   let succeeded = false;
+  // A later save may be queued while this request is in flight. Keep the
+  // payload paired with the remote revision it actually observed.
+  const payload = JSON.parse(JSON.stringify(data));
+  const expectedRevision = syncRemoteUpdatedAt;
   setSyncStatus("busy", "Syncing…");
   try {
-    await window.budgetStore.syncPush(syncUrl(), data, syncRemoteUpdatedAt);
-    syncRemoteUpdatedAt = data.updatedAt || 0;
+    await window.budgetStore.syncPush(syncUrl(), payload, expectedRevision);
+    syncRemoteUpdatedAt = payload.updatedAt || 0;
     succeeded = true;
     setSyncStatus("ok", "Synced");
   } catch (err) {
