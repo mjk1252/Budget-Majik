@@ -137,6 +137,24 @@ function setSyncStatus(state, label) {
   $("syncLabel").textContent = label || "Sync";
 }
 
+function syncErrorLabel(err) {
+  const message = String((err && err.message) || err || "");
+  if (/HTTP 401|HTTP 403/i.test(message)) return "Sync: check /exec URL";
+  if (/HTTP 404/i.test(message)) return "Sync: URL not found";
+  if (/Failed to fetch|NetworkError|fetch failed/i.test(message)) return "Sync: network blocked";
+  return "Sync failed";
+}
+
+function isAppsScriptExecUrl(value) {
+  try {
+    const url = new URL(value);
+    return url.protocol === "https:" && url.hostname === "script.google.com" &&
+      /\/macros\/s\/[^/]+\/exec\/?$/.test(url.pathname);
+  } catch {
+    return false;
+  }
+}
+
 async function pushToSheets() {
   if (!syncUrl()) return;
   // Never allow a background save (such as a recurring item) to win a race
@@ -153,7 +171,7 @@ async function pushToSheets() {
     setSyncStatus("ok", "Synced");
   } catch (err) {
     console.error("sync push failed", err);
-    setSyncStatus("error", err.code === "SYNC_CONFLICT" ? "Sync conflict" : "Sync failed");
+    setSyncStatus("error", err.code === "SYNC_CONFLICT" ? "Sync conflict" : syncErrorLabel(err));
   }
   syncBusy = false;
   if (syncQueued) { syncQueued = false; pushToSheets(); }
@@ -193,7 +211,7 @@ async function pullFromSheets() {
     }
   } catch (err) {
     console.error("sync pull failed", err);
-    setSyncStatus("error", "Sync failed");
+    setSyncStatus("error", syncErrorLabel(err));
   }
 }
 
@@ -221,7 +239,12 @@ $("syncBtn").onclick = () => {
       </div>`,
     onSave: () => {
       const url = $("f-syncurl").value.trim();
-      if (url && !/^https:\/\/script\.google(usercontent)?\.com\//.test(url)) return false;
+      $("f-syncurl").setCustomValidity("");
+      if (url && !isAppsScriptExecUrl(url)) {
+        $("f-syncurl").setCustomValidity("Paste the Apps Script Web app URL ending in /exec (not /dev).");
+        $("f-syncurl").reportValidity();
+        return false;
+      }
       if (!data.settings) data.settings = {};
       data.settings.syncUrl = url;
       window.budgetStore.save(data);
