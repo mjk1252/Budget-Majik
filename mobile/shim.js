@@ -64,7 +64,13 @@ window.budgetStore = {
   },
 
   syncPull: async (url) => {
-    const res = await fetch(url, { redirect: "follow" });
+    // Apps Script redirects ContentService responses to a short-lived
+    // script.googleusercontent.com URL. A browser may cache that redirect,
+    // then later follow its expired target and receive a 404. Give every pull
+    // a unique Apps Script URL and forbid use of cached redirects.
+    const target = new URL(url);
+    target.searchParams.set("_sync", String(Date.now()));
+    const res = await fetch(target, { redirect: "follow", cache: "no-store" });
     if (!res.ok) throw new Error("HTTP " + res.status);
     return await res.json();
   },
@@ -78,7 +84,8 @@ window.budgetStore = {
       method: "POST",
       headers: { "Content-Type": "text/plain" },
       body: JSON.stringify(data),
-      redirect: "follow"
+      redirect: "follow",
+      cache: "no-store"
     });
     if (!res.ok) throw new Error("HTTP " + res.status);
     const result = await res.json();
