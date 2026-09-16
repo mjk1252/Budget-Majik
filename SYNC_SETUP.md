@@ -32,7 +32,7 @@ Do this once. Afterwards, every PC just needs the URL pasted into the app.
 
 ## How it works
 
-- Every change you make is pushed to the sheet automatically. When the app opens, an existing sheet is always treated as the source of truth and replaces the browser's cached copy; cached browser data is uploaded only when connecting to a genuinely empty sheet. Each later upload also carries the revision last read from the sheet, so a stale page cannot silently replace changes made elsewhere; it reports a sync conflict instead.
+- Every change you make is pushed to the sheet automatically. When the app opens, an existing sheet is always treated as the source of truth and replaces the browser's cached copy; cached browser data is uploaded only when connecting to a genuinely empty sheet. Each later upload also carries the revision last read from the sheet. If another website session updates the sheet first, the app reconciles independent changes and retries instead of silently replacing data or remaining stuck on a sync conflict.
 - The **Overview** and **Expenses** tabs in the sheet are a readable view of your data, regenerated on each sync. **Edits made directly in the sheet are not synced back** — the app is the source of truth. (The raw data lives in a hidden `_data` tab; don't edit that.)
 
 ## Updating the script later

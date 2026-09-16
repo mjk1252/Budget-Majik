@@ -127,6 +127,77 @@ let syncBusy = false;
 let syncQueued = false;
 let syncReady = false;
 let syncRemoteUpdatedAt = null;
+let syncBaseData = null;
+
+function cloneSyncValue(value) {
+  return value === undefined ? undefined : JSON.parse(JSON.stringify(value));
+}
+
+function sameSyncValue(left, right) {
+  return JSON.stringify(left) === JSON.stringify(right);
+}
+
+function isSyncObject(value) {
+  return value !== null && typeof value === "object" && !Array.isArray(value);
+}
+
+// Reconcile local edits with a newer Sheet revision. Records with stable ids
+// (expenses, categories, loans, etc.) can be added independently on both
+// devices. If both devices edit the same field, this device's value wins.
+function mergeSyncValue(base, local, remote) {
+  if (sameSyncValue(local, base)) return cloneSyncValue(remote);
+  if (sameSyncValue(remote, base) || sameSyncValue(local, remote)) return cloneSyncValue(local);
+
+  if (Array.isArray(local) && Array.isArray(remote)) {
+    const all = [...(Array.isArray(base) ? base : []), ...local, ...remote];
+    const recordsById = all.every((item) => isSyncObject(item) && item.id != null);
+    if (!recordsById) return cloneSyncValue(local);
+
+    const baseMap = new Map((Array.isArray(base) ? base : []).map((item) => [String(item.id), item]));
+    const localMap = new Map(local.map((item) => [String(item.id), item]));
+    const remoteMap = new Map(remote.map((item) => [String(item.id), item]));
+    const order = [...remote, ...local].map((item) => String(item.id));
+    return [...new Set(order)].flatMap((id) => {
+      const hadBase = baseMap.has(id);
+      const hasLocal = localMap.has(id);
+      const hasRemote = remoteMap.has(id);
+      if (!hasLocal && !hasRemote) return [];
+      if (!hasLocal) {
+        return hadBase && sameSyncValue(remoteMap.get(id), baseMap.get(id))
+          ? [] : [cloneSyncValue(remoteMap.get(id))];
+      }
+      if (!hasRemote) {
+        return hadBase && sameSyncValue(localMap.get(id), baseMap.get(id))
+          ? [] : [cloneSyncValue(localMap.get(id))];
+      }
+      return [mergeSyncValue(baseMap.get(id), localMap.get(id), remoteMap.get(id))];
+    });
+  }
+
+  if (isSyncObject(local) && isSyncObject(remote)) {
+    const baseObject = isSyncObject(base) ? base : {};
+    const merged = {};
+    const keys = new Set([...Object.keys(baseObject), ...Object.keys(remote), ...Object.keys(local)]);
+    for (const key of keys) {
+      const hadBase = Object.prototype.hasOwnProperty.call(baseObject, key);
+      const hasLocal = Object.prototype.hasOwnProperty.call(local, key);
+      const hasRemote = Object.prototype.hasOwnProperty.call(remote, key);
+      if (!hasLocal && !hasRemote) continue;
+      if (!hasLocal) {
+        if (!hadBase || !sameSyncValue(remote[key], baseObject[key])) merged[key] = cloneSyncValue(remote[key]);
+        continue;
+      }
+      if (!hasRemote) {
+        if (!hadBase || !sameSyncValue(local[key], baseObject[key])) merged[key] = cloneSyncValue(local[key]);
+        continue;
+      }
+      merged[key] = mergeSyncValue(baseObject[key], local[key], remote[key]);
+    }
+    return merged;
+  }
+
+  return cloneSyncValue(local);
+}
 
 function syncUrl() {
   return (data.settings && data.settings.syncUrl) || "";
@@ -171,11 +242,31 @@ async function pushToSheets() {
   try {
     await window.budgetStore.syncPush(syncUrl(), payload, expectedRevision);
     syncRemoteUpdatedAt = payload.updatedAt || 0;
+    syncBaseData = cloneSyncValue(payload);
     succeeded = true;
     setSyncStatus("ok", "Synced");
   } catch (err) {
     console.error("sync push failed", err);
-    setSyncStatus("error", err.code === "SYNC_CONFLICT" ? "Sync conflict" : syncErrorLabel(err));
+    if (err.code === "SYNC_CONFLICT") {
+      try {
+        setSyncStatus("busy", "Reconciling…");
+        const remote = await window.budgetStore.syncPull(syncUrl());
+        const keepSettings = data.settings;
+        data = mergeSyncValue(syncBaseData || {}, data, remote || {});
+        data.settings = keepSettings;
+        data.updatedAt = Date.now();
+        syncRemoteUpdatedAt = (remote && remote.updatedAt) || 0;
+        syncBaseData = cloneSyncValue(remote || {});
+        await window.budgetStore.save(data);
+        render();
+        syncQueued = true;
+      } catch (reconcileErr) {
+        console.error("sync reconciliation failed", reconcileErr);
+        setSyncStatus("error", syncErrorLabel(reconcileErr));
+      }
+    } else {
+      setSyncStatus("error", syncErrorLabel(err));
+    }
   }
   syncBusy = false;
   if (syncQueued) { syncQueued = false; pushToSheets(); }
@@ -202,8 +293,10 @@ async function pullFromSheets() {
       await window.budgetStore.save(data);
       render();
       syncRemoteUpdatedAt = remoteRevision;
+      syncBaseData = cloneSyncValue(remote);
     } else {
       syncRemoteUpdatedAt = remoteRevision;
+      syncBaseData = cloneSyncValue(remote || { months: {} });
     }
     syncReady = true;
     // Seed a genuinely empty Sheet from this browser. Never auto-upload over

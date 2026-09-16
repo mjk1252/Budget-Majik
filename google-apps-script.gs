@@ -39,42 +39,50 @@ function doPost(e) {
   if (data.action === 'getCategories') return getShortcutCategories_(data);
   if (data.action === 'addExpense') return addShortcutExpense_(data);
 
-  var ss = SpreadsheetApp.getActiveSpreadsheet();
-  var sh = ss.getSheetByName('_data') || ss.insertSheet('_data');
-  // Reject stale clients rather than silently overwriting newer sheet data.
-  // The app supplies the revision it observed on its most recent pull.
-  var expected = e.parameter && e.parameter.expectedUpdatedAt;
-  if (expected === undefined || expected === '') {
-    return ContentService.createTextOutput(JSON.stringify({
-      ok: false,
-      conflict: true,
-      error: 'This client is outdated and may not upload data safely.'
-    })).setMimeType(ContentService.MimeType.JSON);
-  }
-  var current = '{"months":{}}';
-  if (sh.getLastRow() > 0) {
-    current = sh.getRange(1, 1, sh.getLastRow(), 1).getValues()
-      .map(function (r) { return r[0]; }).join('');
-  }
-  var currentData = JSON.parse(current);
-  var currentRevision = Number(currentData.updatedAt || 0);
-  if (currentRevision !== Number(expected)) {
-    return ContentService.createTextOutput(JSON.stringify({
-      ok: false,
-      conflict: true,
-      error: 'The Google Sheet changed on another device. Local data was not uploaded.'
-    })).setMimeType(ContentService.MimeType.JSON);
-  }
-  sh.clearContents();
-  var rows = [];
-  for (var i = 0; i < json.length; i += CHUNK) rows.push([json.slice(i, i + CHUNK)]);
-  sh.getRange(1, 1, rows.length, 1).setValues(rows);
-  sh.hideSheet();
+  // Keep the revision check and write atomic. Without this lock, two clients
+  // can both pass the check and the slower write silently replaces the other.
+  var lock = LockService.getDocumentLock();
+  lock.waitLock(30000);
+  try {
+    var ss = SpreadsheetApp.getActiveSpreadsheet();
+    var sh = ss.getSheetByName('_data') || ss.insertSheet('_data');
+    // Reject stale clients rather than silently overwriting newer sheet data.
+    // The app supplies the revision it observed on its most recent pull.
+    var expected = e.parameter && e.parameter.expectedUpdatedAt;
+    if (expected === undefined || expected === '') {
+      return ContentService.createTextOutput(JSON.stringify({
+        ok: false,
+        conflict: true,
+        error: 'This client is outdated and may not upload data safely.'
+      })).setMimeType(ContentService.MimeType.JSON);
+    }
+    var current = '{"months":{}}';
+    if (sh.getLastRow() > 0) {
+      current = sh.getRange(1, 1, sh.getLastRow(), 1).getValues()
+        .map(function (r) { return r[0]; }).join('');
+    }
+    var currentData = JSON.parse(current);
+    var currentRevision = Number(currentData.updatedAt || 0);
+    if (currentRevision !== Number(expected)) {
+      return ContentService.createTextOutput(JSON.stringify({
+        ok: false,
+        conflict: true,
+        error: 'The Google Sheet changed on another device. Local data was not uploaded.'
+      })).setMimeType(ContentService.MimeType.JSON);
+    }
+    sh.clearContents();
+    var rows = [];
+    for (var i = 0; i < json.length; i += CHUNK) rows.push([json.slice(i, i + CHUNK)]);
+    sh.getRange(1, 1, rows.length, 1).setValues(rows);
+    sh.hideSheet();
 
-  renderReadable(ss, data);
+    renderReadable(ss, data);
 
-  return ContentService.createTextOutput('{"ok":true}')
-    .setMimeType(ContentService.MimeType.JSON);
+    return ContentService.createTextOutput('{"ok":true}')
+      .setMimeType(ContentService.MimeType.JSON);
+  } finally {
+    lock.releaseLock();
+  }
 }
 
 /** Return category names for a month without exposing the rest of the budget. */
