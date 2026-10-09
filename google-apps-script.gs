@@ -3,12 +3,30 @@
  * Paste this whole file into Extensions → Apps Script of a Google Sheet,
  * then deploy as a Web App (see SYNC_SETUP.md).
  *
- * Source of truth is the raw JSON stored in the hidden "_data" sheet.
- * "Overview" and "Expenses" sheets are regenerated on every sync for
- * viewing — edits made directly in those sheets are NOT synced back.
+ * Source of truth is the raw JSON stored in the "_data" sheet.
+ * Only JSON storage is updated. Existing readable tabs are left untouched.
  */
 
 var CHUNK = 40000; // stay under the 50k chars-per-cell limit
+var STORAGE_PREFIX = 'BUDGET_MAJIK_JSON_V1:'; // chunks must never be interpreted as Sheet formulas
+
+// Run once in the editor opened from the budget spreadsheet. Web-app
+// requests cannot depend on there being an active spreadsheet.
+function setupStorage() {
+  var spreadsheet = SpreadsheetApp.getActiveSpreadsheet();
+  if (!spreadsheet) throw new Error('Open Apps Script from the budget spreadsheet, then run setupStorage.');
+  PropertiesService.getScriptProperties().setProperty('BUDGET_SPREADSHEET_ID', spreadsheet.getId());
+}
+
+function storageSpreadsheet_() {
+  var id = PropertiesService.getScriptProperties().getProperty('BUDGET_SPREADSHEET_ID');
+  if (!id) {
+    var error = new Error('Storage not configured. Run setupStorage in the Apps Script editor.');
+    error.retryable = false;
+    throw error;
+  }
+  return SpreadsheetApp.openById(id);
+}
 
 // Run this once from the Apps Script editor, then copy the token from the
 // execution log into the iPhone Shortcut. Running it again replaces the token.
@@ -19,20 +37,20 @@ function createShortcutToken() {
 }
 
 function doGet() {
-  var ss = SpreadsheetApp.getActiveSpreadsheet();
-  var sh = ss.getSheetByName('_data');
-  var json = '{"months":{}}';
-  if (sh && sh.getLastRow() > 0) {
-    var values = sh.getRange(1, 1, sh.getLastRow(), 1).getValues();
-    json = values.map(function (r) { return r[0]; }).join('');
-  }
-  return ContentService.createTextOutput(json)
-    .setMimeType(ContentService.MimeType.JSON);
+  return withStorageLock_(function () {
+    var ss = storageSpreadsheet_();
+    return jsonResponse_(readData_(ss.getSheetByName('_data')));
+  });
 }
 
 function doPost(e) {
-  var json = e.postData.contents;
-  var data = JSON.parse(json); // throws on bad payload → error returned to app
+  var data;
+  try {
+    data = JSON.parse(e.postData.contents);
+    if (!data || typeof data !== 'object' || Array.isArray(data)) throw new Error('Invalid payload.');
+  } catch (error) {
+    return jsonResponse_({ ok: false, error: 'Invalid JSON payload.' });
+  }
 
   // Small, locked mutation used by the iPhone Shortcut. Normal app sync posts
   // the complete data object and continues through the code below.
@@ -41,10 +59,11 @@ function doPost(e) {
 
   // Keep the revision check and write atomic. Without this lock, two clients
   // can both pass the check and the slower write silently replaces the other.
-  var lock = LockService.getDocumentLock();
-  lock.waitLock(30000);
-  try {
-    var ss = SpreadsheetApp.getActiveSpreadsheet();
+  if (!data.months || typeof data.months !== 'object' || Array.isArray(data.months)) {
+    return jsonResponse_({ ok: false, error: 'Missing budget months.' });
+  }
+  return withStorageLock_(function () {
+    var ss = storageSpreadsheet_();
     var sh = ss.getSheetByName('_data') || ss.insertSheet('_data');
     // Reject stale clients rather than silently overwriting newer sheet data.
     // The app supplies the revision it observed on its most recent pull.
@@ -56,12 +75,7 @@ function doPost(e) {
         error: 'This client is outdated and may not upload data safely.'
       })).setMimeType(ContentService.MimeType.JSON);
     }
-    var current = '{"months":{}}';
-    if (sh.getLastRow() > 0) {
-      current = sh.getRange(1, 1, sh.getLastRow(), 1).getValues()
-        .map(function (r) { return r[0]; }).join('');
-    }
-    var currentData = JSON.parse(current);
+    var currentData = readData_(sh);
     var currentRevision = Number(currentData.updatedAt || 0);
     if (currentRevision !== Number(expected)) {
       return ContentService.createTextOutput(JSON.stringify({
@@ -70,18 +84,26 @@ function doPost(e) {
         error: 'The Google Sheet changed on another device. Local data was not uploaded.'
       })).setMimeType(ContentService.MimeType.JSON);
     }
-    sh.clearContents();
-    var rows = [];
-    for (var i = 0; i < json.length; i += CHUNK) rows.push([json.slice(i, i + CHUNK)]);
-    sh.getRange(1, 1, rows.length, 1).setValues(rows);
-    sh.hideSheet();
+    // The server assigns a unique increasing revision, even when devices have
+    // different clocks or two requests arrive within the same millisecond.
+    data.updatedAt = Math.max(Date.now(), currentRevision + 1);
+    delete data.settings;
+    writeData_(sh, data);
+    return jsonResponse_({ ok: true, updatedAt: data.updatedAt });
+  });
+}
 
-    renderReadable(ss, data);
-
-    return ContentService.createTextOutput('{"ok":true}')
-      .setMimeType(ContentService.MimeType.JSON);
+function withStorageLock_(callback) {
+  var lock = LockService.getScriptLock();
+  var acquired = false;
+  try {
+    acquired = lock.tryLock(10000);
+    if (!acquired) return jsonResponse_({ ok: false, retryable: true, error: 'Storage busy. Try again.' });
+    return callback();
+  } catch (error) {
+    return jsonResponse_({ ok: false, retryable: error.retryable !== false, error: String(error.message || error) });
   } finally {
-    lock.releaseLock();
+    if (acquired) lock.releaseLock();
   }
 }
 
@@ -96,15 +118,16 @@ function getShortcutCategories_(request) {
     return jsonResponse_({ ok: false, error: 'Invalid month.' });
   }
 
-  var ss = SpreadsheetApp.getActiveSpreadsheet();
-  var sh = ss.getSheetByName('_data');
-  var stored = readData_(sh);
-  stored.months = stored.months || {};
-  var month = materializeMonth_(stored, monthKey);
-  var names = (month.categories || []).map(function (category) {
-    return String(category.name || '').trim();
-  }).filter(function (name) { return !!name; });
-  return jsonResponse_({ ok: true, categories: names });
+  return withStorageLock_(function () {
+    var ss = storageSpreadsheet_();
+    var stored = readData_(ss.getSheetByName('_data'));
+    stored.months = stored.months || {};
+    var month = materializeMonth_(stored, monthKey);
+    var names = (month.categories || []).map(function (category) {
+      return String(category.name || '').trim();
+    }).filter(function (name) { return !!name; });
+    return jsonResponse_({ ok: true, categories: names });
+  });
 }
 
 /** Add one bank transaction, optionally split across multiple categories. */
@@ -140,10 +163,8 @@ function addShortcutExpense_(request) {
     return jsonResponse_({ ok: false, error: 'Category amounts do not add up to the transaction total.' });
   }
 
-  var lock = LockService.getDocumentLock();
-  lock.waitLock(30000);
-  try {
-    var ss = SpreadsheetApp.getActiveSpreadsheet();
+  return withStorageLock_(function () {
+    var ss = storageSpreadsheet_();
     var sh = ss.getSheetByName('_data') || ss.insertSheet('_data');
     var stored = readData_(sh);
     stored.months = stored.months || {};
@@ -174,15 +195,11 @@ function addShortcutExpense_(request) {
       month.expenses.push(expense);
     }
 
-    stored.updatedAt = Date.now();
+    stored.updatedAt = Math.max(Date.now(), Number(stored.updatedAt || 0) + 1);
+    delete stored.settings;
     writeData_(sh, stored);
-    renderReadable(ss, stored);
     return jsonResponse_({ ok: true, added: splits.length, updatedAt: stored.updatedAt });
-  } catch (error) {
-    return jsonResponse_({ ok: false, error: String(error.message || error) });
-  } finally {
-    lock.releaseLock();
-  }
+  });
 }
 
 function money_(value) {
@@ -196,18 +213,29 @@ function jsonResponse_(value) {
 
 function readData_(sheet) {
   if (!sheet || sheet.getLastRow() < 1) return { months: {} };
-  var json = sheet.getRange(1, 1, sheet.getLastRow(), 1).getValues()
-    .map(function (row) { return row[0]; }).join('');
+  var values = sheet.getRange(1, 1, sheet.getLastRow(), 1).getValues();
+  var prefixed = String(values[0][0]).indexOf(STORAGE_PREFIX) === 0;
+  var json = values.map(function (row) {
+    var value = String(row[0]);
+    if (!value) return '';
+    if (!prefixed) return value; // old deployments stored unprefixed JSON
+    if (value.indexOf(STORAGE_PREFIX) !== 0) throw new Error('Invalid stored JSON chunk.');
+    return value.slice(STORAGE_PREFIX.length);
+  }).join('');
   return JSON.parse(json || '{"months":{}}');
 }
 
 function writeData_(sheet, data) {
   var json = JSON.stringify(data);
   var rows = [];
-  for (var i = 0; i < json.length; i += CHUNK) rows.push([json.slice(i, i + CHUNK)]);
-  sheet.clearContents();
+  for (var i = 0; i < json.length; i += CHUNK) rows.push([STORAGE_PREFIX + json.slice(i, i + CHUNK)]);
+  // Replace the old chunks and trailing cells in one range write. Never
+  // clear the previous JSON before the replacement is ready to be written.
+  var rowCount = Math.max(rows.length, sheet.getLastRow());
+  while (rows.length < rowCount) rows.push(['']);
+  if (rowCount > sheet.getMaxRows()) sheet.insertRowsAfter(sheet.getMaxRows(), rowCount - sheet.getMaxRows());
   sheet.getRange(1, 1, rows.length, 1).setValues(rows);
-  sheet.hideSheet();
+  SpreadsheetApp.flush();
 }
 
 function materializeMonth_(data, key) {
@@ -218,94 +246,9 @@ function materializeMonth_(data, key) {
     income: previous.income,
     categories: (previous.categories || []).map(function (category) {
       return { id: category.id, name: category.name, emoji: category.emoji,
-        budget: category.budget, override: null };
+        budget: category.budget, dailyWeeklySplit: !!category.dailyWeeklySplit, override: null };
     }),
     expenses: [], adjustments: []
   } : { income: 0, categories: [], expenses: [], adjustments: [] };
   return data.months[key];
-}
-
-/* ---------- pretty, read-only views ---------- */
-
-function spentFor(month, catId) {
-  return month.expenses.reduce(function (s, ex) {
-    return ex.catId === catId ? s + ex.amount : s;
-  }, 0);
-}
-
-function remainingFor(month, cat) {
-  var spent = spentFor(month, cat.id);
-  if (cat.override) return cat.override.value - (spent - cat.override.spentAt);
-  return cat.budget - spent;
-}
-
-// Loans are cash out/in but never touch a category's budget — same rule as renderer/app.js.
-function loansLentInMonth(loans, key) {
-  return (loans || []).filter(function (l) { return l.date.slice(0, 7) === key; })
-    .reduce(function (s, l) { return s + l.amount; }, 0);
-}
-function loansRepaidInMonth(loans, key) {
-  var sum = 0;
-  (loans || []).forEach(function (l) {
-    (l.repayments || []).forEach(function (r) {
-      if (r.date.slice(0, 7) === key) sum += r.amount;
-    });
-  });
-  return sum;
-}
-
-function renderReadable(ss, data) {
-  var monthKeys = Object.keys(data.months || {}).sort().reverse();
-
-  // --- Overview sheet ---
-  var ov = ss.getSheetByName('Overview') || ss.insertSheet('Overview', 0);
-  ov.clearContents();
-  var rows = [['Month', 'Category', 'Budget', 'Spent', 'Remaining', 'Re-evaluated', '', 'Income', 'Total spent', 'Loans net', 'Adjustments', 'Cash left', 'Adjustment notes']];
-  monthKeys.forEach(function (key) {
-    var m = data.months[key];
-    var totalSpent = m.expenses.reduce(function (s, ex) { return s + ex.amount; }, 0);
-    var netLoanCash = loansLentInMonth(data.loans, key) - loansRepaidInMonth(data.loans, key);
-    var adjustments = m.adjustments || [];
-    var totalAdjustments = adjustments.reduce(function (s, a) { return s + a.amount; }, 0);
-    var adjustmentNotes = adjustments.map(function (a) {
-      return (a.amount >= 0 ? '+' : '') + a.amount + (a.note ? ' (' + a.note + ')' : '');
-    }).join('; ');
-    var cashLeft = m.income - totalSpent - netLoanCash + totalAdjustments;
-    var first = true;
-    m.categories.forEach(function (c) {
-      rows.push([
-        key, c.name, c.budget, spentFor(m, c.id), remainingFor(m, c),
-        c.override ? 'yes' : '',
-        '',
-        first ? m.income : '', first ? totalSpent : '',
-        first ? netLoanCash : '', first ? totalAdjustments : '', first ? cashLeft : '',
-        first ? adjustmentNotes : ''
-      ]);
-      first = false;
-    });
-    if (!m.categories.length) {
-      rows.push([key, '(no categories)', '', '', '', '', '', m.income, totalSpent, netLoanCash, totalAdjustments, cashLeft, adjustmentNotes]);
-    }
-    rows.push(['', '', '', '', '', '', '', '', '', '', '', '', '']);
-  });
-  ov.getRange(1, 1, rows.length, rows[0].length).setValues(rows);
-  ov.getRange(1, 1, 1, rows[0].length).setFontWeight('bold');
-
-  // --- Expenses sheet ---
-  var ex = ss.getSheetByName('Expenses') || ss.insertSheet('Expenses');
-  ex.clearContents();
-  var erows = [['Date', 'Month', 'Category', 'Amount', 'Note']];
-  monthKeys.forEach(function (key) {
-    var m = data.months[key];
-    var cats = {};
-    m.categories.forEach(function (c) { cats[c.id] = c.name; });
-    m.expenses
-      .slice()
-      .sort(function (a, b) { return b.date < a.date ? -1 : 1; })
-      .forEach(function (e2) {
-        erows.push([e2.date, key, cats[e2.catId] || '(deleted)', e2.amount, e2.note || '']);
-      });
-  });
-  ex.getRange(1, 1, erows.length, erows[0].length).setValues(erows);
-  ex.getRange(1, 1, 1, erows[0].length).setFontWeight('bold');
 }

@@ -20,6 +20,21 @@ function saveLocal(data) {
   localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
 }
 
+async function syncRequest(url, options = {}) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 45000);
+  try {
+    const response = await fetch(url, { ...options, signal: controller.signal, redirect: "follow", cache: "no-store" });
+    if (!response.ok) throw new Error("HTTP " + response.status);
+    return await response.json();
+  } catch (err) {
+    if (err.name === "AbortError") throw new Error("Sync timed out");
+    throw err;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 function downloadJson(filename, obj) {
   const blob = new Blob([JSON.stringify(obj, null, 2)], { type: "application/json" });
   const url = URL.createObjectURL(blob);
@@ -70,9 +85,7 @@ window.budgetStore = {
     // a unique Apps Script URL and forbid use of cached redirects.
     const target = new URL(url);
     target.searchParams.set("_sync", String(Date.now()));
-    const res = await fetch(target, { redirect: "follow", cache: "no-store" });
-    if (!res.ok) throw new Error("HTTP " + res.status);
-    return await res.json();
+    return await syncRequest(target);
   },
 
   syncPush: async (url, data, expectedUpdatedAt) => {
@@ -80,21 +93,17 @@ window.budgetStore = {
     if (expectedUpdatedAt !== undefined && expectedUpdatedAt !== null) {
       target.searchParams.set("expectedUpdatedAt", String(expectedUpdatedAt));
     }
-    const res = await fetch(target, {
+    const result = await syncRequest(target, {
       method: "POST",
       headers: { "Content-Type": "text/plain" },
-      body: JSON.stringify(data),
-      redirect: "follow",
-      cache: "no-store"
+      body: JSON.stringify(data)
     });
-    if (!res.ok) throw new Error("HTTP " + res.status);
-    const result = await res.json();
-    if (!result.ok) {
-      const err = new Error(result.error || "Sync was rejected");
-      err.code = result.conflict ? "SYNC_CONFLICT" : "SYNC_REJECTED";
+    if (!result || result.ok !== true) {
+      const err = new Error(result && result.error || "Sync was rejected");
+      err.code = result && result.conflict ? "SYNC_CONFLICT" : result && result.retryable ? "SYNC_TEMPORARY" : "SYNC_REJECTED";
       throw err;
     }
-    return true;
+    return result;
   },
 
   backupExport: async (data) => {

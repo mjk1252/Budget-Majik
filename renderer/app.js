@@ -44,7 +44,8 @@ function getMonthFor(key) {
   return {
     income: prev.income,
     categories: prev.categories.map((c) => ({
-      id: c.id, name: c.name, emoji: c.emoji, budget: c.budget, override: null
+      id: c.id, name: c.name, emoji: c.emoji, budget: c.budget,
+      dailyWeeklySplit: !!c.dailyWeeklySplit, override: null
     })),
     expenses: [],
     adjustments: []
@@ -115,10 +116,11 @@ function applyPrepurchases() {
 }
 
 async function persist() {
-  data.updatedAt = Date.now();
+  data.updatedAt = Math.max(Date.now(), (data.updatedAt || 0) + 1);
+  rememberSyncState(true);
   await window.budgetStore.save(data);
   render();
-  pushToSheets();
+  scheduleSync();
 }
 
 /* ---------- Google Sheets sync ---------- */
@@ -128,6 +130,10 @@ let syncQueued = false;
 let syncReady = false;
 let syncRemoteUpdatedAt = null;
 let syncBaseData = null;
+let syncNeedsPull = true;
+let syncTimer = null;
+let syncRetryCount = 0;
+let syncEpoch = 0;
 
 function cloneSyncValue(value) {
   return value === undefined ? undefined : JSON.parse(JSON.stringify(value));
@@ -203,6 +209,61 @@ function syncUrl() {
   return (data.settings && data.settings.syncUrl) || "";
 }
 
+// Sync bookkeeping and connection settings stay in this browser only.
+function syncPayload(value = data) {
+  const payload = cloneSyncValue(value);
+  delete payload.settings;
+  return payload;
+}
+
+function sameSyncContent(left, right) {
+  const a = syncPayload(left);
+  const b = syncPayload(right);
+  delete a.updatedAt;
+  delete b.updatedAt;
+  return sameSyncValue(a, b);
+}
+
+function rememberSyncState(pending) {
+  if (!syncUrl()) return;
+  if (!data.settings) data.settings = {};
+  // Before the first pull, retain the last acknowledged base from storage.
+  const previous = data.settings.syncState;
+  data.settings.syncState = {
+    url: syncUrl(), pending,
+    base: syncBaseData || (previous && previous.url === syncUrl() ? previous.base : null)
+  };
+}
+
+function scheduleSync(delay = 700) {
+  if (!syncUrl()) return;
+  syncQueued = true;
+  clearTimeout(syncTimer);
+  setSyncStatus("busy", "Saved locally · pending sync");
+  syncTimer = setTimeout(() => { syncTimer = null; pushToSheets(); }, delay);
+}
+
+function resetSyncConnection() {
+  syncEpoch++;
+  clearTimeout(syncTimer);
+  syncTimer = null;
+  syncReady = false;
+  syncNeedsPull = true;
+  syncRetryCount = 0;
+  syncBaseData = null;
+  syncRemoteUpdatedAt = null;
+  syncQueued = false;
+}
+
+function validateSyncData(value) {
+  if (!isSyncObject(value) || !isSyncObject(value.months) || value.ok === false) {
+    const err = new Error(value && value.error || "Invalid sync response");
+    err.code = value && value.retryable ? "SYNC_TEMPORARY" : "SYNC_REJECTED";
+    throw err;
+  }
+  return syncPayload(value);
+}
+
 function setSyncStatus(state, label) {
   $("syncDot").className = "sync-dot " + (state || "");
   $("syncLabel").textContent = label || "Sync";
@@ -210,6 +271,7 @@ function setSyncStatus(state, label) {
 
 function syncErrorLabel(err) {
   const message = String((err && err.message) || err || "");
+  if (/Storage not configured/i.test(message)) return "Sync: run setupStorage";
   if (/HTTP 401|HTTP 403/i.test(message)) return "Sync: check /exec URL";
   if (/HTTP 404/i.test(message)) return "Sync: URL not found";
   if (/Failed to fetch|NetworkError|fetch failed/i.test(message)) return "Sync: network blocked";
@@ -228,89 +290,104 @@ function isAppsScriptExecUrl(value) {
 
 async function pushToSheets() {
   if (!syncUrl()) return;
-  // Never allow a background save (such as a recurring item) to win a race
-  // against the first pull after launch.
-  if (!syncReady) { syncQueued = true; return; }
   if (syncBusy) { syncQueued = true; return; }
+  clearTimeout(syncTimer);
+  syncTimer = null;
   syncBusy = true;
-  let succeeded = false;
-  // A later save may be queued while this request is in flight. Keep the
-  // payload paired with the remote revision it actually observed.
-  const payload = JSON.parse(JSON.stringify(data));
-  const expectedRevision = syncRemoteUpdatedAt;
+  syncQueued = false;
+  const url = syncUrl();
+  const epoch = syncEpoch;
+  const active = () => epoch === syncEpoch && url === syncUrl();
+  let retryDelay = null;
   setSyncStatus("busy", "Syncing…");
   try {
-    await window.budgetStore.syncPush(syncUrl(), payload, expectedRevision);
-    syncRemoteUpdatedAt = payload.updatedAt || 0;
-    syncBaseData = cloneSyncValue(payload);
-    succeeded = true;
-    setSyncStatus("ok", "Synced");
-  } catch (err) {
-    console.error("sync push failed", err);
-    if (err.code === "SYNC_CONFLICT") {
-      try {
-        setSyncStatus("busy", "Reconciling…");
-        const remote = await window.budgetStore.syncPull(syncUrl());
-        const keepSettings = data.settings;
-        data = mergeSyncValue(syncBaseData || {}, data, remote || {});
-        data.settings = keepSettings;
-        data.updatedAt = Date.now();
-        syncRemoteUpdatedAt = (remote && remote.updatedAt) || 0;
-        syncBaseData = cloneSyncValue(remote || {});
-        await window.budgetStore.save(data);
-        render();
-        syncQueued = true;
-      } catch (reconcileErr) {
-        console.error("sync reconciliation failed", reconcileErr);
-        setSyncStatus("error", syncErrorLabel(reconcileErr));
+    if (syncNeedsPull || !syncReady) {
+      syncNeedsPull = false;
+      const beforePull = syncPayload();
+      const saved = data.settings && data.settings.syncState;
+      const base = syncBaseData || (saved && saved.url === url && saved.base);
+      const remote = validateSyncData(await window.budgetStore.syncPull(url));
+      if (!active()) return false;
+      const hasRemote = Object.keys(remote.months).length > 0 || (remote.updatedAt || 0) > 0;
+      const settings = data.settings;
+      // A saved base lets offline changes/deletions survive a reload. Without
+      // one, retain only changes made while this first pull was in flight.
+      if (hasRemote) {
+        const mergeBase = base || (saved && saved.url === url && saved.pending ? { months: {} } : beforePull);
+        data = mergeSyncValue(mergeBase, syncPayload(), remote);
+        data.settings = settings;
       }
+      syncBaseData = remote;
+      syncRemoteUpdatedAt = remote.updatedAt || 0;
+      syncReady = true;
+      rememberSyncState(!sameSyncContent(data, remote));
+      await window.budgetStore.save(data);
+      if (!active()) return false;
+      render();
+    }
+    if (!sameSyncContent(data, syncBaseData)) {
+      const payload = syncPayload();
+      payload.updatedAt = Math.max(Date.now(), (syncRemoteUpdatedAt || 0) + 1);
+      rememberSyncState(true);
+      await window.budgetStore.save(data);
+      if (!active()) return false;
+      const result = await window.budgetStore.syncPush(url, payload, syncRemoteUpdatedAt);
+      if (!active()) return false;
+      const revision = result && Number.isFinite(result.updatedAt) ? result.updatedAt : payload.updatedAt;
+      payload.updatedAt = revision;
+      syncRemoteUpdatedAt = revision;
+      syncBaseData = payload;
+      const pending = !sameSyncContent(data, payload);
+      if (!pending) data.updatedAt = revision;
+      rememberSyncState(pending);
+      await window.budgetStore.save(data);
+      if (!active()) return false;
+      syncQueued = pending || syncNeedsPull;
+    }
+    syncRetryCount = 0;
+    if (!syncQueued) setSyncStatus("ok", "Synced");
+    return true;
+  } catch (err) {
+    if (!active()) return false;
+    console.error("sync failed", err);
+    // Always read again after an ambiguous failure: the server may have
+    // committed a POST whose response never reached this browser.
+    syncNeedsPull = true;
+    syncQueued = true;
+    const retryable = err.code !== "SYNC_REJECTED" && !/HTTP 40[134]/i.test(err.message || "");
+    if (retryable) {
+      retryDelay = Math.min(60000, 1000 * 2 ** Math.min(syncRetryCount++, 6));
+      setSyncStatus("error", "Saved locally · retrying sync");
     } else {
+      syncQueued = false;
       setSyncStatus("error", syncErrorLabel(err));
     }
+    return false;
+  } finally {
+    syncBusy = false;
+    if (!active()) {
+      if (syncUrl()) scheduleSync(0);
+    } else if (retryDelay !== null) {
+      // Keep the error visible until the next attempt starts.
+      clearTimeout(syncTimer);
+      syncTimer = setTimeout(() => { syncTimer = null; pushToSheets(); }, retryDelay);
+    } else if (syncQueued && syncRetryCount === 0) {
+      scheduleSync();
+    }
   }
-  syncBusy = false;
-  if (syncQueued) { syncQueued = false; pushToSheets(); }
-  return succeeded;
 }
 
-// On launch (and whenever a sync URL is selected), an existing Sheet is the
-// source of truth. Browser localStorage may contain a later timestamp from a
-// stale or previously disconnected session, so it must never win merely by
-// opening the page.
 async function pullFromSheets() {
-  if (!syncUrl()) return;
-  syncReady = false;
-  setSyncStatus("busy", "Syncing…");
-  try {
-    const remote = await window.budgetStore.syncPull(syncUrl());
-    const remoteRevision = (remote && remote.updatedAt) || 0;
-    const hasRemoteData = remote && remote.months &&
-      (Object.keys(remote.months).length > 0 || remoteRevision > 0);
-    if (hasRemoteData) {
-      const keepSettings = data.settings;
-      data = remote;
-      data.settings = keepSettings;
-      await window.budgetStore.save(data);
-      render();
-      syncRemoteUpdatedAt = remoteRevision;
-      syncBaseData = cloneSyncValue(remote);
-    } else {
-      syncRemoteUpdatedAt = remoteRevision;
-      syncBaseData = cloneSyncValue(remote || { months: {} });
-    }
-    syncReady = true;
-    // Seed a genuinely empty Sheet from this browser. Never auto-upload over
-    // an existing Sheet during startup, regardless of timestamp ordering.
-    if (!hasRemoteData) {
-      await pushToSheets();
-    } else {
-      setSyncStatus("ok", "Synced");
-    }
-  } catch (err) {
-    console.error("sync pull failed", err);
-    setSyncStatus("error", syncErrorLabel(err));
-  }
+  syncNeedsPull = true;
+  return pushToSheets();
 }
+
+// Phone browsers suspend timers in the background. Retry when the page is
+// visible again or connectivity returns, and refresh other devices' edits.
+window.addEventListener("online", () => pullFromSheets());
+document.addEventListener("visibilitychange", () => {
+  if (document.visibilityState === "visible") pullFromSheets();
+});
 
 $("syncBtn").onclick = () => {
   openModal({
@@ -323,7 +400,7 @@ $("syncBtn").onclick = () => {
         <div class="hint">
           One-time setup: open <b>SYNC_SETUP.md</b> in the app folder — it walks you through
           creating a Google Sheet, pasting the provided script, and deploying it as a web app.
-          Paste the resulting /exec URL here on every PC. Leave empty to disable sync.
+          Paste the resulting /exec URL here on each device. Leave empty to disable sync.
         </div>
       </div>
       <div class="field">
@@ -342,6 +419,7 @@ $("syncBtn").onclick = () => {
         $("f-syncurl").reportValidity();
         return false;
       }
+      if (url !== syncUrl()) resetSyncConnection();
       if (!data.settings) data.settings = {};
       data.settings.syncUrl = url;
       window.budgetStore.save(data);
@@ -367,6 +445,8 @@ $("syncBtn").onclick = () => {
       data = restored;
       if (!data.months) data.months = {};
       data.settings = keepSettings;
+      data.updatedAt = Math.max(Date.now(), (syncRemoteUpdatedAt || 0) + 1);
+      rememberSyncState(true);
       await window.budgetStore.save(data);
       closeModal();
       render();
@@ -556,6 +636,51 @@ function remainingFor(month, cat) {
   return cat.budget - spent;
 }
 
+// Seven-day weeks start on the 1st; the final block may be shorter.
+// Today is included in the remaining allowance. Pace uses the end of today.
+function categorySplit(year, month, budget, spent, remaining, now = new Date()) {
+  const days = new Date(year, month + 1, 0).getDate();
+  const current = now.getFullYear() === year && now.getMonth() === month;
+  const past = year * 12 + month < now.getFullYear() * 12 + now.getMonth();
+  const elapsed = current ? now.getDate() : past ? days : 0;
+  const daysRemaining = current ? days - now.getDate() + 1 : past ? 0 : days;
+  const daily = budget / days;
+  return {
+    days, current, past, elapsed, daysRemaining, daily,
+    fullWeeks: Math.floor(days / 7), extraDays: days % 7,
+    weekly: daily * 7, partialWeek: daily * (days % 7),
+    expectedSpent: daily * elapsed,
+    paceDifference: daily * elapsed - spent,
+    spentDays: daily > 0 ? spent / daily : null,
+    remainingDays: daily > 0 ? Math.max(0, remaining) / daily : null,
+    adjustedDaily: daysRemaining > 0 ? Math.max(0, remaining) / daysRemaining : null
+  };
+}
+
+function splitDetailsHtml(split, cat, remaining) {
+  const count = (n) => n.toLocaleString("en-US", { maximumFractionDigits: 1 });
+  const weeks = `${split.fullWeeks} weeks${split.extraDays ? ` + ${split.extraDays} days` : ""}`;
+  const pace = split.current || split.past
+    ? `<div class="split-pace ${split.paceDifference < -0.005 ? "over" : "under"}">${Math.abs(split.paceDifference) < 0.005 ? "On budget pace" : `${fmt(Math.abs(split.paceDifference))} ${split.paceDifference > 0 ? "under" : "over"} budget pace`} · ${fmt(split.expectedSpent)} planned ${split.current ? "by the end of today" : "for the month"}</div>`
+    : `<div class="split-note">Upcoming month · remaining allowance spread across all ${split.days} days</div>`;
+  const change = split.adjustedDaily === null ? 0 : split.adjustedDaily - split.daily;
+  return `<div class="split-details">
+    <div class="split-note">${split.days} days · ${weeks} · weeks counted from the 1st</div>
+    <div class="split-metrics">
+      <div><span>Planned daily</span><b>${fmt(split.daily)}</b></div>
+      <div><span>Full 7-day week</span><b>${fmt(split.weekly)}</b></div>
+      ${split.extraDays ? `<div><span>Final ${split.extraDays} days</span><b>${fmt(split.partialWeek)}</b></div>` : ""}
+    </div>
+    ${cat.budget > 0 ? `<div class="split-note">Purchases represent <b>${count(split.spentDays)} days</b> of budget · <b>${count(split.remainingDays)} days</b> still affordable at the planned rate. Spending-based estimate.</div>` : `<div class="split-note">Set a monthly budget above zero to estimate days of purchases.</div>`}
+    ${pace}
+    <div class="split-allowance">
+      ${split.past ? `Month ended · ${fmt(Math.abs(remaining))} ${remaining < 0 ? "over budget" : "left"}` : `<b>${fmt(split.adjustedDaily)} / day now</b><span>${split.daysRemaining} day${split.daysRemaining === 1 ? "" : "s"} left${split.current ? ", including today" : ""}${Math.abs(change) >= 0.005 ? ` · ${fmt(Math.abs(change))} ${change > 0 ? "more" : "less"} per day than planned` : ""}</span>`}
+    </div>
+    ${cat.override ? `<div class="split-note">Daily allowance uses your re-evaluated remaining amount; pace and purchase days use the original budget.</div>` : ""}
+    ${remaining < 0 && !split.past ? `<div class="split-pace over">Budget exhausted · ${fmt(-remaining)} over the remaining allowance</div>` : ""}
+  </div>`;
+}
+
 /* ---------- rendering ---------- */
 
 function render() {
@@ -639,8 +764,10 @@ function renderCategories(month) {
       .reduce((s, p) => s + p.exp.amount, 0);
     const spent = spentFor(month, cat.id);
     const remaining = remainingFor(month, cat);
+    const split = cat.dailyWeeklySplit ? categorySplit(viewYear, viewMonth, cat.budget, spent, remaining, now) : null;
     const effectiveTotal = spent + Math.max(0, remaining);
-    const pct = effectiveTotal > 0 ? Math.min(100, (spent / effectiveTotal) * 100) : (spent > 0 ? 100 : 0);
+    const barTotal = split ? cat.budget : effectiveTotal;
+    const pct = barTotal > 0 ? Math.max(0, Math.min(100, (spent / barTotal) * 100)) : (spent > 0 ? 100 : 0);
     const over = remaining < 0;
     const spentFrac = cat.budget > 0 ? spent / cat.budget : 0;
     const aheadOfPace = isCurrentMonth && !over && !cat.override && cat.budget > 0
@@ -658,18 +785,25 @@ function renderCategories(month) {
         </span>
       </div>
       <div class="bar" title="${isCurrentMonth ? `${Math.round(monthElapsed * 100)}% through the month · ${Math.round(spentFrac * 100)}% of budget used` : ""}">
-        <div class="bar-fill ${over ? "over" : pct > 80 ? "warn" : ""}" style="width:${over ? 100 : pct}%"></div>
+        <div class="bar-fill ${over ? "over" : split && split.current && split.paceDifference >= 0 ? "under" : pct > 80 ? "warn" : ""}" style="width:${split ? pct : over ? 100 : pct}%"></div>
         ${isCurrentMonth ? `<div class="pace-mark" style="left:${(monthElapsed * 100).toFixed(1)}%" title="Today: ${Math.round(monthElapsed * 100)}% through the month"></div>` : ""}
       </div>
       ${cat.override ? `<div class="cat-adjust-note">✦ re-evaluated — remaining pinned (budget untouched)</div>` : ""}
       ${preAmt > 0 ? `<div class="cat-prep-note">🛒 ${fmt(preAmt)} already pre-purchased in an earlier month (paid then, allocated here)</div>` : ""}
-      ${aheadOfPace ? `<div class="pace-note">⚡ ${Math.round(spentFrac * 100)}% of budget used, but only ${Math.round(monthElapsed * 100)}% through the month</div>` : ""}
+      ${aheadOfPace && !split ? `<div class="pace-note">⚡ ${Math.round(spentFrac * 100)}% of budget used, but only ${Math.round(monthElapsed * 100)}% through the month</div>` : ""}
+      <label class="split-toggle"><input type="checkbox" role="switch" data-act="split" ${cat.dailyWeeklySplit ? "checked" : ""} /><span>Daily/Weekly Split</span></label>
+      ${split ? splitDetailsHtml(split, cat, remaining) : ""}
       <div class="cat-actions">
         <button class="mini-btn" data-act="reeval">Re-evaluate</button>
         <button class="mini-btn" data-act="edit">Edit</button>
       </div>`;
     row.querySelector('[data-act="reeval"]').onclick = () => openReevalModal(cat);
     row.querySelector('[data-act="edit"]').onclick = () => openCategoryModal(cat);
+    row.querySelector('[data-act="split"]').onchange = (event) => {
+      const c = editMonth().categories.find((item) => item.id === cat.id);
+      if (c) c.dailyWeeklySplit = event.target.checked;
+      persist();
+    };
     list.appendChild(row);
   }
 }
@@ -882,6 +1016,10 @@ function openCategoryModal(cat) {
         <label>Monthly budget</label>
         <input id="f-budget" type="number" min="0" step="0.01" value="${cat ? cat.budget : ""}" placeholder="0.00" />
         <div class="hint">This is the planned amount. It carries over as the default for future months and is never changed by re-evaluations.</div>
+      </div>
+      <div class="field">
+        <label class="split-toggle"><input id="f-split" type="checkbox" role="switch" ${cat && cat.dailyWeeklySplit ? "checked" : ""} /><span>Daily/Weekly Split</span></label>
+        <div class="hint">Show daily and weekly allowances, purchase days, and an updated daily budget using what's left. This choice carries over to future months.</div>
       </div>`,
     onSave: () => {
       const name = $("f-name").value.trim();
@@ -890,9 +1028,9 @@ function openCategoryModal(cat) {
       const month = editMonth();
       if (cat) {
         const c = month.categories.find((x) => x.id === cat.id);
-        if (c) { c.name = name; c.emoji = $("f-emoji").value.trim(); c.budget = budget; }
+        if (c) { c.name = name; c.emoji = $("f-emoji").value.trim(); c.budget = budget; c.dailyWeeklySplit = $("f-split").checked; }
       } else {
-        month.categories.push({ id: uid(), name, emoji: $("f-emoji").value.trim(), budget, override: null });
+        month.categories.push({ id: uid(), name, emoji: $("f-emoji").value.trim(), budget, dailyWeeklySplit: $("f-split").checked, override: null });
       }
       persist();
     },
@@ -1567,6 +1705,8 @@ $("todayBtn").onclick = () => {
   viewMonth = now.getMonth();
   data = (await window.budgetStore.load()) || { months: {} };
   if (!data.months) data.months = {};
+  // Keep the website usable while a slow or offline connection is syncing.
+  render();
   if (syncUrl()) {
     setSyncStatus("busy", "Syncing…");
     await pullFromSheets();

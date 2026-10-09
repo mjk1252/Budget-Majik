@@ -320,6 +320,64 @@ html, body {
   transition: opacity 0.15s ease;
 }
 .cat-row:hover .cat-actions { opacity: 1; }
+.bar-fill.under { background: linear-gradient(90deg, #34d399, #10b981); }
+
+.split-toggle, .field label.split-toggle {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  min-height: 36px;
+  margin: 7px 0 0;
+  font-size: 12px;
+  font-weight: 600;
+  text-transform: none;
+  letter-spacing: normal;
+  color: var(--text-dim);
+  cursor: pointer;
+}
+.split-toggle input, .field .split-toggle input {
+  appearance: none;
+  width: 34px;
+  height: 20px;
+  padding: 2px;
+  flex: 0 0 34px;
+  border: 1px solid rgba(255,255,255,0.3);
+  border-radius: 999px;
+  background: rgba(255,255,255,0.1);
+  cursor: pointer;
+}
+.split-toggle input::before {
+  content: "";
+  display: block;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: var(--text);
+  transition: transform 0.18s ease;
+}
+.split-toggle input:checked { background: #4673b8; }
+.split-toggle input:checked::before { transform: translateX(14px); }
+.split-toggle input:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+.split-details { margin-top: 6px; font-variant-numeric: tabular-nums; }
+.split-note { color: var(--text-dim); font-size: 11.5px; line-height: 1.6; }
+.split-metrics { display: flex; flex-wrap: wrap; gap: 10px 22px; margin: 10px 0; }
+.split-metrics div { display: flex; flex-direction: column; gap: 3px; }
+.split-metrics span { color: var(--text-dim); font-size: 11px; }
+.split-metrics b { font-size: 15px; }
+.split-pace { font-size: 11.5px; line-height: 1.6; margin-top: 8px; }
+.split-pace.under { color: var(--green); }
+.split-pace.over { color: var(--red); }
+.split-allowance {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 10px 12px;
+  margin: 10px 0 5px;
+  border-radius: var(--radius-sm);
+  background: rgba(125,211,252,0.08);
+}
+.split-allowance b { color: var(--accent); font-size: 16px; }
+.split-allowance span { color: var(--text-dim); font-size: 11.5px; line-height: 1.5; }
 .mini-btn {
   padding: 4px 11px;
   font-size: 11.5px;
