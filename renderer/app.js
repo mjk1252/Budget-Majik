@@ -638,6 +638,8 @@ function remainingFor(month, cat) {
 
 // Seven-day weeks start on the 1st; the final block may be shorter.
 // Today is included in the remaining allowance. Pace uses the end of today.
+// Purchase coverage always uses the original daily rate. Savings can raise
+// the displayed daily rate, but overspending never lowers it.
 function categorySplit(year, month, budget, spent, remaining, now = new Date()) {
   const days = new Date(year, month + 1, 0).getDate();
   const current = now.getFullYear() === year && now.getMonth() === month;
@@ -645,24 +647,28 @@ function categorySplit(year, month, budget, spent, remaining, now = new Date()) 
   const elapsed = current ? now.getDate() : past ? days : 0;
   const daysRemaining = current ? days - now.getDate() + 1 : past ? 0 : days;
   const daily = budget / days;
+  const spentDays = daily > 0 ? Math.max(0, spent) / daily : null;
+  const daysUsed = current ? elapsed - 1 : elapsed;
   return {
-    days, current, past, elapsed, daysRemaining, daily,
+    days, current, past, elapsed, daysUsed, daysRemaining, daily,
     fullWeeks: Math.floor(days / 7), extraDays: days % 7,
     weekly: daily * 7, partialWeek: daily * (days % 7),
     expectedSpent: daily * elapsed,
     paceDifference: daily * elapsed - spent,
-    spentDays: daily > 0 ? spent / daily : null,
+    spentDays,
+    coverageDays: spentDays === null ? null : Math.max(0, spentDays - daysUsed),
     remainingDays: daily > 0 ? Math.max(0, remaining) / daily : null,
-    adjustedDaily: daysRemaining > 0 ? Math.max(0, remaining) / daysRemaining : null
+    adjustedDaily: daysRemaining > 0 ? Math.max(daily, Math.max(0, remaining) / daysRemaining) : null
   };
 }
 
 function splitDetailsHtml(split, cat, remaining) {
   const count = (n) => n.toLocaleString("en-US", { maximumFractionDigits: 1 });
+  const daysWorth = (n) => `${count(n)} ${count(n) === "1" ? "day's" : "days'"} worth`;
   const weeks = `${split.fullWeeks} weeks${split.extraDays ? ` + ${split.extraDays} days` : ""}`;
   const pace = split.current || split.past
-    ? `<div class="split-pace ${split.paceDifference < -0.005 ? "over" : "under"}">${Math.abs(split.paceDifference) < 0.005 ? "On budget pace" : `${fmt(Math.abs(split.paceDifference))} ${split.paceDifference > 0 ? "under" : "over"} budget pace`} · ${fmt(split.expectedSpent)} planned ${split.current ? "by the end of today" : "for the month"}</div>`
-    : `<div class="split-note">Upcoming month · remaining allowance spread across all ${split.days} days</div>`;
+    ? `<div class="split-pace ${split.paceDifference < -0.005 ? "over" : "under"}">${Math.abs(split.paceDifference) < 0.005 ? "On budget pace" : `${fmt(Math.abs(split.paceDifference))} ${split.paceDifference > 0 ? "under" : "over"} budget pace${split.paceDifference < 0 && split.daily > 0 ? ` · <b>${daysWorth(-split.paceDifference / split.daily)} bought ahead</b>` : ""}`} · ${fmt(split.expectedSpent)} planned ${split.current ? "by the end of today" : "for the month"}</div>`
+    : `<div class="split-note">Upcoming month · ${split.days} days to plan for</div>`;
   const change = split.adjustedDaily === null ? 0 : split.adjustedDaily - split.daily;
   return `<div class="split-details">
     <div class="split-note">${split.days} days · ${weeks} · weeks counted from the 1st</div>
@@ -671,13 +677,13 @@ function splitDetailsHtml(split, cat, remaining) {
       <div><span>Full 7-day week</span><b>${fmt(split.weekly)}</b></div>
       ${split.extraDays ? `<div><span>Final ${split.extraDays} days</span><b>${fmt(split.partialWeek)}</b></div>` : ""}
     </div>
-    ${cat.budget > 0 ? `<div class="split-note">Purchases represent <b>${count(split.spentDays)} days</b> of budget · <b>${count(split.remainingDays)} days</b> still affordable at the planned rate. Spending-based estimate.</div>` : `<div class="split-note">Set a monthly budget above zero to estimate days of purchases.</div>`}
+    ${cat.budget > 0 ? `<div class="split-allowance"><b>${count(split.coverageDays)} days of purchases estimated left</b><span>Bought ${count(split.spentDays)} days' worth at ${fmt(split.daily)} / day, minus ${split.daysUsed} days elapsed${split.current ? " before today" : ""}.</span></div><div class="split-note">${count(split.remainingDays)} more days affordable from the balance at the planned rate. Coverage assumes purchases are used evenly each day.</div>` : `<div class="split-note">Set a monthly budget above zero to estimate days of purchases.</div>`}
     ${pace}
     <div class="split-allowance">
-      ${split.past ? `Month ended · ${fmt(Math.abs(remaining))} ${remaining < 0 ? "over budget" : "left"}` : `<b>${fmt(split.adjustedDaily)} / day now</b><span>${split.daysRemaining} day${split.daysRemaining === 1 ? "" : "s"} left${split.current ? ", including today" : ""}${Math.abs(change) >= 0.005 ? ` · ${fmt(Math.abs(change))} ${change > 0 ? "more" : "less"} per day than planned` : ""}</span>`}
+      ${split.past ? `Month ended · ${fmt(Math.abs(remaining))} ${remaining < 0 ? "over budget" : "left"}` : `<b>${fmt(split.adjustedDaily)} / day now</b><span>${split.daysRemaining} day${split.daysRemaining === 1 ? "" : "s"} left${split.current ? ", including today" : ""}${change >= 0.005 ? ` · ${fmt(change)} more per day than planned` : " · daily rate held at the planned amount"}</span>`}
     </div>
-    ${cat.override ? `<div class="split-note">Daily allowance uses your re-evaluated remaining amount; pace and purchase days use the original budget.</div>` : ""}
-    ${remaining < 0 && !split.past ? `<div class="split-pace over">Budget exhausted · ${fmt(-remaining)} over the remaining allowance</div>` : ""}
+    ${cat.override ? `<div class="split-note">Savings use your re-evaluated balance. The daily rate never falls below the original plan; purchase coverage uses that original rate.</div>` : ""}
+    ${remaining < 0 && !split.past ? `<div class="split-pace over">Budget exhausted · ${fmt(-remaining)} over the ${cat.override ? "re-evaluated allowance" : "monthly budget"}${split.daily > 0 ? ` · <b>${daysWorth(-remaining / split.daily)} extra</b>` : ""}</div>` : ""}
   </div>`;
 }
 
@@ -1019,7 +1025,7 @@ function openCategoryModal(cat) {
       </div>
       <div class="field">
         <label class="split-toggle"><input id="f-split" type="checkbox" role="switch" ${cat && cat.dailyWeeklySplit ? "checked" : ""} /><span>Daily/Weekly Split</span></label>
-        <div class="hint">Show daily and weekly allowances, purchase days, and an updated daily budget using what's left. This choice carries over to future months.</div>
+        <div class="hint">Show daily and weekly budgets, estimated purchase coverage, and over-budget amounts as days' worth. Savings can raise the daily rate; overspending never lowers it. This choice carries over to future months.</div>
       </div>`,
     onSave: () => {
       const name = $("f-name").value.trim();
