@@ -28,6 +28,8 @@
       <button class="icon-btn" id="nextMonth" title="Next month">›</button>
     </div>
     <button class="pill-btn ghost" id="todayBtn">Today</button>
+    <button class="pill-btn primary" id="quickLogBtn">+ Log expense</button>
+    <button class="pill-btn ghost" id="balanceBtn">Balance check</button>
     <button class="pill-btn ghost" id="loansBtn" title="Loans & IOUs">🤝 <span id="loansLabel">Loans</span></button>
     <button class="pill-btn ghost" id="insightsBtn">Insights</button>
     <button class="pill-btn ghost sync-btn" id="syncBtn" title="Google Sheets sync">
@@ -63,6 +65,11 @@
       <div class="stat-sub">after all remaining budgets</div>
     </div>
   </section>
+
+  <div class="balance-strip glass" id="balanceStrip" hidden>
+    <span id="balanceSummary"></span>
+    <button class="mini-btn" id="balanceStripBtn">Check balance</button>
+  </div>
 
   <div class="columns">
 

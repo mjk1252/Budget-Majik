@@ -21,6 +21,9 @@ function fmt(n) {
   return `${sign}R${str}`;
 }
 
+const localDate = (date = new Date()) =>
+  `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
+
 /* ---------- data access ---------- */
 
 function emptyMonth() {
@@ -612,6 +615,51 @@ function loansRepaidInMonth(key) {
   return sum;
 }
 
+/* ---------- bank balance checks ---------- */
+
+// Use the same monthly cash figure as the "Expected in bank" card. A check
+// anchors this figure to the real bank balance for the rest of this month.
+function expectedInBankForMonth(month, key) {
+  const incoming = incomingPrepurchases(key).reduce((sum, item) => sum + item.exp.amount, 0);
+  const expenses = month.expenses.reduce((sum, item) => sum + item.amount, 0);
+  const adjustments = (month.adjustments || []).reduce((sum, item) => sum + item.amount, 0);
+  return month.income - expenses - incoming - loansLentInMonth(key) + loansRepaidInMonth(key) + adjustments;
+}
+
+function latestBalanceCheck(key) {
+  return (data.balanceChecks || []).filter((check) => check.month === key)
+    .sort((a, b) => b.checkedAt - a.checkedAt)[0] || null;
+}
+
+function balanceEstimate(check, modelCash) {
+  return check ? Math.round((check.actual + modelCash - check.modelCash) * 100) / 100 : null;
+}
+
+function renderBalanceCheck(month) {
+  const key = currentKey();
+  const check = latestBalanceCheck(key);
+  const strip = $("balanceStrip");
+  strip.hidden = insightsOpen;
+  const current = key === localDate().slice(0, 7);
+  if (!current) {
+    $("balanceSummary").textContent = "Balance checks are available for the current month.";
+    $("balanceStripBtn").hidden = true;
+    return;
+  }
+  $("balanceStripBtn").hidden = false;
+  if (!check) {
+    $("balanceSummary").textContent = "Start a weekly balance check with the balance shown by your bank.";
+    $("balanceStripBtn").textContent = "Set starting balance";
+    return;
+  }
+  const estimate = balanceEstimate(check, expectedInBankForMonth(month, key));
+  const last = new Date(check.checkedAt).toLocaleDateString("en-ZA", { day: "numeric", month: "short" });
+  const difference = check.difference == null ? "Starting balance saved" :
+    `${fmt(Math.abs(check.difference))} ${check.difference < 0 ? "lower" : check.difference > 0 ? "higher" : "difference"} at last check`;
+  $("balanceSummary").textContent = `Estimated bank balance ${fmt(estimate)} · ${difference} · checked ${last}`;
+  $("balanceStripBtn").textContent = "Check again";
+}
+
 /* ---------- derived numbers ---------- */
 
 // Budget-relevant spend for a category in a month: this month's own expenses
@@ -754,6 +802,7 @@ function render() {
   freeEl.className = "stat-value " + (trulyFree < 0 ? "neg" : "pos");
 
   $("budgetTotalLabel").textContent = totalBudget ? `${fmt(totalBudget)} budgeted` : "";
+  renderBalanceCheck(month);
 
   const outstandingTotal = totalOutstandingLoans();
   $("loansLabel").textContent = outstandingTotal > 0 ? `Loans (${fmt(outstandingTotal)})` : "Loans";
@@ -890,8 +939,10 @@ function renderExpenses(month) {
         <div class="expense-note">${escapeHtml(exp.note || (cat ? cat.name : "Expense"))}</div>
         <div class="expense-meta">${cat ? escapeHtml(cat.name) + " · " : ""}${day.toLocaleDateString("en-US", { month: "short", day: "numeric" })}${exp.recurringId ? " · ↻ recurring" : ""}${exp.forMonth ? ` · <span class="prep-tag">🛒 for ${escapeHtml(monthLabelOf(exp.forMonth))}</span>` : exp.prepurchased ? ` · <span class="prep-tag">🛒 pre-purchased</span>` : ""}</div>
       </div>
-      <div class="expense-amount">${fmt(exp.amount)}</div>`;
+      <div class="expense-amount">${fmt(exp.amount)}</div>
+      <button type="button" class="mini-btn expense-repeat" title="Log this expense again today">Repeat</button>`;
     row.onclick = () => openExpenseModal(exp);
+    row.querySelector(".expense-repeat").onclick = (event) => { event.stopPropagation(); openQuickLog(exp); };
     list.appendChild(row);
   }
 }
@@ -1016,6 +1067,38 @@ cashLeftCard.onclick = () => {
   renderAdjustmentsModal();
 };
 
+function openBalanceCheck() {
+  const now = new Date();
+  const key = localDate(now).slice(0, 7);
+  if (insightsOpen) $("insightsBtn").click();
+  viewYear = now.getFullYear();
+  viewMonth = now.getMonth();
+  render();
+  const modelCash = expectedInBankForMonth(getMonth(), key);
+  const previous = latestBalanceCheck(key);
+  const expected = balanceEstimate(previous, modelCash);
+  openModal({
+    title: previous ? "Check bank balance" : "Set starting bank balance",
+    saveLabel: previous ? "Save check" : "Set starting balance",
+    body: `
+      <div class="hint">Enter the balance currently shown by your bank. Use the same account each time. This check does not change your budgets or expenses.</div>
+      ${previous ? `<div class="balance-comparison">Expected since your last check: <b>${fmt(expected)}</b></div>` : `<div class="hint">Your first check is the starting point. Differences appear on later checks this month.</div>`}
+      <div class="field"><label>Current bank balance</label><input id="f-bank-balance" type="number" step="0.01" inputmode="decimal" placeholder="0.00" /></div>
+      <div class="hint">The estimate uses expenses, income, loans and cash adjustments recorded in Budget Majik. It assumes this month's income has arrived. At the start of each month, set a new starting balance.</div>`,
+    onSave: () => {
+      const actual = numVal("f-bank-balance");
+      if (!Number.isFinite(actual)) return false;
+      const difference = expected == null ? null : Math.round((actual - expected) * 100) / 100;
+      if (!data.balanceChecks) data.balanceChecks = [];
+      data.balanceChecks.push({ id: uid(), month: key, actual, modelCash, expected, difference, checkedAt: Date.now() });
+      persist();
+    }
+  });
+}
+
+$("balanceBtn").onclick = openBalanceCheck;
+$("balanceStripBtn").onclick = openBalanceCheck;
+
 /* ---------- categories ---------- */
 
 $("addCategoryBtn").onclick = () => openCategoryModal(null);
@@ -1111,6 +1194,82 @@ function openReevalModal(cat) {
 /* ---------- expenses ---------- */
 
 $("addExpenseBtn").onclick = () => openExpenseModal(null);
+
+function preferredQuickCategories(month) {
+  const ids = new Set(month.categories.map((cat) => cat.id));
+  const counts = new Map();
+  const now = new Date();
+  for (let i = 0; i < 3; i++) {
+    const date = new Date(now.getFullYear(), now.getMonth() - i, 1);
+    const stored = data.months[monthKey(date.getFullYear(), date.getMonth())];
+    for (const expense of stored?.expenses || []) {
+      if (ids.has(expense.catId)) counts.set(expense.catId, (counts.get(expense.catId) || 0) + 1);
+    }
+  }
+  return [...month.categories].sort((a, b) => (counts.get(b.id) || 0) - (counts.get(a.id) || 0)).slice(0, 6);
+}
+
+function quickEntryUrl() {
+  const url = new URL(window.location.href);
+  url.searchParams.set("quick", "1");
+  url.hash = "";
+  return url.toString();
+}
+
+function openQuickLog(sourceExpense = null) {
+  const now = new Date();
+  const key = monthKey(now.getFullYear(), now.getMonth());
+  const month = getMonthFor(key);
+  if (!month.categories.length) {
+    openModal({ title: "No categories yet", saveLabel: "OK",
+      body: `<div class="hint">Add a category before logging an expense.</div>`, onSave: () => {} });
+    return;
+  }
+  const preferred = preferredQuickCategories(month);
+  const selectedId = sourceExpense && month.categories.some((cat) => cat.id === sourceExpense.catId)
+    ? sourceExpense.catId : preferred[0].id;
+  const options = month.categories.map((cat) =>
+    `<option value="${cat.id}" ${cat.id === selectedId ? "selected" : ""}>${escapeHtml(cat.emoji || "📦")} ${escapeHtml(cat.name)}</option>`).join("");
+  openModal({
+    title: "Log expense",
+    saveLabel: "Save expense",
+    body: `
+      <div class="field"><label>Amount</label><input id="f-quick-amount" type="number" min="0.01" step="0.01" inputmode="decimal" value="${sourceExpense ? sourceExpense.amount : ""}" placeholder="0.00" /></div>
+      <div class="field"><label>Category</label><div class="quick-category-list">${preferred.map((cat) => `<button type="button" class="quick-category ${cat.id === selectedId ? "active" : ""}" data-cat-id="${cat.id}">${escapeHtml(cat.emoji || "📦")} ${escapeHtml(cat.name)}</button>`).join("")}</div><select id="f-quick-cat">${options}</select></div>
+      <div class="field"><label>Note (optional)</label><input id="f-quick-note" type="text" value="${sourceExpense ? escapeHtml(sourceExpense.note || "") : ""}" placeholder="What was it for?" /></div>
+      ${window.location.protocol === "https:" ? `<button type="button" class="mini-btn" id="copyQuickLink">Copy iPhone shortcut link</button><div class="hint" id="quickLinkStatus">Open this link from an iPhone Home Screen or Lock Screen shortcut to start here.</div>` : ""}`,
+    onSave: () => {
+      const amount = numVal("f-quick-amount");
+      const catId = $("f-quick-cat").value;
+      if (!(amount > 0) || !getMonthFor(key).categories.some((cat) => cat.id === catId)) return false;
+      editMonthFor(key).expenses.push({ id: uid(), catId, amount,
+        note: $("f-quick-note").value.trim(), date: localDate(now), createdAt: Date.now() });
+      viewYear = now.getFullYear();
+      viewMonth = now.getMonth();
+      if (insightsOpen) $("insightsBtn").click();
+      persist();
+    }
+  });
+  const categorySelect = $("f-quick-cat");
+  const updateSelection = () => {
+    $("modalBody").querySelectorAll(".quick-category").forEach((button) =>
+      button.classList.toggle("active", button.dataset.catId === categorySelect.value));
+  };
+  $("modalBody").querySelectorAll(".quick-category").forEach((button) => {
+    button.onclick = () => { categorySelect.value = button.dataset.catId; updateSelection(); $("f-quick-amount").focus(); };
+  });
+  categorySelect.onchange = updateSelection;
+  if ($("copyQuickLink")) $("copyQuickLink").onclick = async () => {
+    try {
+      await navigator.clipboard.writeText(quickEntryUrl());
+      $("quickLinkStatus").textContent = "Link copied. Add it to an Open URLs action in Apple Shortcuts.";
+    } catch {
+      $("quickLinkStatus").textContent = `Copy this link: ${quickEntryUrl()}`;
+    }
+  };
+}
+
+$("quickLogBtn").onclick = () => openQuickLog();
 
 $("expenseSearch").oninput = (e) => {
   expenseFilter = e.target.value.trim();
@@ -1623,6 +1782,7 @@ $("insightsBtn").onclick = () => {
   $("insightsBtn").textContent = insightsOpen ? "Budget" : "Insights";
   document.querySelector(".hero").hidden = insightsOpen;
   document.querySelector(".columns").hidden = insightsOpen;
+  $("balanceStrip").hidden = insightsOpen;
   $("insightsView").hidden = !insightsOpen;
   if (insightsOpen) renderInsights();
 };
@@ -1727,8 +1887,14 @@ $("todayBtn").onclick = () => {
   viewMonth = now.getMonth();
   data = (await window.budgetStore.load()) || { months: {} };
   if (!data.months) data.months = {};
+  const quickRequested = new URLSearchParams(window.location.search).get("quick") === "1";
   // Keep the website usable while a slow or offline connection is syncing.
   render();
+  let quickOpened = false;
+  if (quickRequested && getMonth().categories.length) {
+    openQuickLog();
+    quickOpened = true;
+  }
   if (syncUrl()) {
     setSyncStatus("busy", "Syncing…");
     await pullFromSheets();
@@ -1736,4 +1902,5 @@ $("todayBtn").onclick = () => {
   const recurred = applyRecurring();
   const prepurchased = applyPrepurchases();
   if (recurred || prepurchased) { persist(); } else { render(); }
+  if (quickRequested && !quickOpened) openQuickLog();
 })();

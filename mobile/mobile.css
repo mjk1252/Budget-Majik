@@ -176,6 +176,9 @@ input, select, textarea { font-size: 16px; } /* prevents iOS auto-zoom on focus 
 .pill-btn:focus-visible, .icon-btn:focus-visible, .mini-btn:focus-visible, summary:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
 .sync-btn { white-space: normal; text-align: left; max-width: 100%; }
 .quick-add input, .quick-add select, .search-row input { background: #1c2a3d; border-color: #40536d; min-width: 0; }
+.balance-strip { flex-wrap: wrap; line-height: 1.5; }
+.balance-strip .mini-btn { margin-left: auto; min-height: 36px; }
+.expense-repeat { min-height: 36px; }
 .expense-info { min-width: 0; }
 .expense-note { overflow-wrap: anywhere; }
 
