@@ -671,17 +671,27 @@ function splitDetailsHtml(split, cat, remaining) {
     : `<div class="split-note">Upcoming month · ${split.days} days to plan for</div>`;
   const change = split.adjustedDaily === null ? 0 : split.adjustedDaily - split.daily;
   return `<div class="split-details">
-    <div class="split-note">${split.days} days · ${weeks} · weeks counted from the 1st</div>
+    ${cat.budget > 0 ? `<div class="split-summary">
+      <div class="coverage-card">
+        <span class="budget-eyebrow">Estimated purchase coverage</span>
+        <b class="coverage-value">${count(split.coverageDays)} <span>days</span></b>
+        <span class="coverage-caption">About ${count(split.coverageDays)} days of ${/food|grocer/i.test(cat.name || "") ? "food" : "purchases"} left</span>
+      </div>
+      <div class="daily-card">
+        <span class="budget-eyebrow">Daily budget guide</span>
+        <b class="daily-value">${split.past ? fmt(split.daily) : fmt(split.adjustedDaily)} <span>/ day</span></b>
+        <span class="coverage-caption">${split.past ? "Original daily plan" : change >= 0.005 ? `${fmt(change)} more per day from savings` : "Original rate maintained"}</span>
+      </div>
+    </div><details class="split-explanation"><summary>How coverage is estimated</summary><div>Bought ${daysWorth(split.spentDays)} at ${fmt(split.daily)} / day, minus ${split.daysUsed} days elapsed${split.current ? " before today" : ""}. This estimate assumes purchases are used evenly each day.</div></details>` : `<div class="split-note">Set a monthly budget above zero to estimate purchase coverage.</div>`}
+    <div class="split-cash-note"><span class="budget-eyebrow">Cash available for new purchases</span><span>${remaining < 0 ? `No budget left · ${fmt(-remaining)} over` : `${fmt(remaining)} left`}${cat.budget > 0 ? ` · ${count(split.remainingDays)} more days at the original daily rate` : ""}</span></div>
+    ${pace}
+    <div class="split-note split-calendar">${split.days} days · ${weeks} · weeks counted from the 1st</div>
     <div class="split-metrics">
       <div><span>Planned daily</span><b>${fmt(split.daily)}</b></div>
       <div><span>Full 7-day week</span><b>${fmt(split.weekly)}</b></div>
       ${split.extraDays ? `<div><span>Final ${split.extraDays} days</span><b>${fmt(split.partialWeek)}</b></div>` : ""}
     </div>
-    ${cat.budget > 0 ? `<div class="split-allowance"><b>${count(split.coverageDays)} days of purchases estimated left</b><span>Bought ${count(split.spentDays)} days' worth at ${fmt(split.daily)} / day, minus ${split.daysUsed} days elapsed${split.current ? " before today" : ""}.</span></div><div class="split-note">${count(split.remainingDays)} more days affordable from the balance at the planned rate. Coverage assumes purchases are used evenly each day.</div>` : `<div class="split-note">Set a monthly budget above zero to estimate days of purchases.</div>`}
-    ${pace}
-    <div class="split-allowance">
-      ${split.past ? `Month ended · ${fmt(Math.abs(remaining))} ${remaining < 0 ? "over budget" : "left"}` : `<b>${fmt(split.adjustedDaily)} / day now</b><span>${split.daysRemaining} day${split.daysRemaining === 1 ? "" : "s"} left${split.current ? ", including today" : ""}${change >= 0.005 ? ` · ${fmt(change)} more per day than planned` : " · daily rate held at the planned amount"}</span>`}
-    </div>
+    <div class="split-note">${split.past ? "Month ended" : `${split.daysRemaining} day${split.daysRemaining === 1 ? "" : "s"} left${split.current ? ", including today" : ""} · daily guide never drops below the original plan`}</div>
     ${cat.override ? `<div class="split-note">Savings use your re-evaluated balance. The daily rate never falls below the original plan; purchase coverage uses that original rate.</div>` : ""}
     ${remaining < 0 && !split.past ? `<div class="split-pace over">Budget exhausted · ${fmt(-remaining)} over the ${cat.override ? "re-evaluated allowance" : "monthly budget"}${split.daily > 0 ? ` · <b>${daysWorth(-remaining / split.daily)} extra</b>` : ""}</div>` : ""}
   </div>`;
@@ -778,22 +788,28 @@ function renderCategories(month) {
     const spentFrac = cat.budget > 0 ? spent / cat.budget : 0;
     const aheadOfPace = isCurrentMonth && !over && !cat.override && cat.budget > 0
       && spentFrac > monthElapsed + 0.1 && spent > 0;
+    const status = over ? { tone: "over", label: "Over budget" }
+      : pct >= 80 ? { tone: "warn", label: "Near budget limit" }
+      : aheadOfPace ? { tone: "warn", label: "Spending ahead of pace" }
+      : isCurrentMonth && cat.budget > 0 && !cat.override && spentFrac < monthElapsed
+        ? { tone: "under", label: "Under budget pace" }
+      : { tone: "neutral", label: spent === 0 ? "No spending yet" : "Within budget" };
 
     const row = document.createElement("div");
-    row.className = "cat-row";
+    row.className = `cat-row cat-status-${status.tone}`;
     row.innerHTML = `
       <div class="cat-top">
         <span class="cat-emoji">${cat.emoji || "📦"}</span>
         <span class="cat-name">${escapeHtml(cat.name)}</span>
-        <span class="cat-nums">
-          <b class="${over ? "over" : cat.override ? "adjusted" : ""}">${fmt(remaining)}</b> left
-          &nbsp;·&nbsp; ${fmt(spent)} spent &nbsp;·&nbsp; ${fmt(cat.budget)} budget
-        </span>
+        <span class="budget-status ${status.tone}">${status.label}</span>
       </div>
-      <div class="bar" title="${isCurrentMonth ? `${Math.round(monthElapsed * 100)}% through the month · ${Math.round(spentFrac * 100)}% of budget used` : ""}">
-        <div class="bar-fill ${over ? "over" : split && split.current && split.paceDifference >= 0 ? "under" : pct > 80 ? "warn" : ""}" style="width:${split ? pct : over ? 100 : pct}%"></div>
+      <div class="cat-balance ${over ? "over" : ""}"><b>${fmt(Math.abs(remaining))}</b><span>${over ? "over budget" : "left to spend"}</span></div>
+      <div class="cat-budget-meta"><span><b>${fmt(spent)}</b> spent</span><span><b>${fmt(cat.budget)}</b> monthly budget</span></div>
+      <div class="bar" role="progressbar" aria-label="${escapeHtml(cat.name)} budget spent" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${pct.toFixed(1)}" aria-valuetext="${fmt(spent)} spent of ${fmt(cat.budget)} budget" title="${isCurrentMonth ? `${Math.round(monthElapsed * 100)}% through the month · ${Math.round(spentFrac * 100)}% of budget used` : ""}">
+        <div class="bar-fill ${status.tone === "neutral" ? "" : status.tone}" style="width:${split ? pct : over ? 100 : pct}%"></div>
         ${isCurrentMonth ? `<div class="pace-mark" style="left:${(monthElapsed * 100).toFixed(1)}%" title="Today: ${Math.round(monthElapsed * 100)}% through the month"></div>` : ""}
       </div>
+      ${isCurrentMonth ? `<div class="bar-caption">White marker: today's progress through the month</div>` : ""}
       ${cat.override ? `<div class="cat-adjust-note">✦ re-evaluated — remaining pinned (budget untouched)</div>` : ""}
       ${preAmt > 0 ? `<div class="cat-prep-note">🛒 ${fmt(preAmt)} already pre-purchased in an earlier month (paid then, allocated here)</div>` : ""}
       ${aheadOfPace && !split ? `<div class="pace-note">⚡ ${Math.round(spentFrac * 100)}% of budget used, but only ${Math.round(monthElapsed * 100)}% through the month</div>` : ""}
