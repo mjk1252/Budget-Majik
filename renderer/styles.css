@@ -286,6 +286,7 @@ html, body {
 }
 
 .cat-row {
+  cursor: pointer;
   position: relative;
   padding: 14px 16px 15px;
   border-radius: var(--radius-md);
@@ -304,6 +305,9 @@ html, body {
 }
 .cat-emoji { font-size: 17px; }
 .cat-name { font-size: 15px; font-weight: 650; flex: 1; }
+button.cat-name { background: none; border: 0; padding: 0; color: inherit; font-family: inherit; text-align: left; cursor: pointer; }
+button.cat-name:hover { text-decoration: underline; }
+button.cat-name:focus-visible { outline: 2px solid var(--accent); outline-offset: 4px; border-radius: 3px; }
 .cat-nums {
   font-size: 13px;
   color: var(--text-dim);
@@ -477,6 +481,13 @@ html, body {
 @keyframes popIn { from { opacity: 0; transform: scale(0.94) translateY(8px); } }
 .modal h3 { font-size: 18px; font-weight: 700; margin-bottom: 18px; }
 .modal-body { display: flex; flex-direction: column; gap: 14px; }
+.category-expense-summary { display: flex; justify-content: space-between; gap: 12px; align-items: center; }
+.category-expense-summary span { color: var(--text-dim); font-size: 13px; }
+.category-expense-list { max-height: 50vh; overflow-y: auto; }
+.category-expense-list ul { list-style: none; padding: 0; margin: 0; }
+.category-expense-list h4 { margin: 18px 0 6px; font-size: 14px; }
+.category-expense { display: flex; align-items: center; gap: 12px; padding: 12px 0; border-bottom: 1px solid var(--glass-border); }
+.category-expense .expense-note { white-space: normal; overflow-wrap: anywhere; }
 .modal-actions {
   display: flex;
   justify-content: flex-end;

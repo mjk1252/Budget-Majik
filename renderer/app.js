@@ -849,7 +849,7 @@ function renderCategories(month) {
     row.innerHTML = `
       <div class="cat-top">
         <span class="cat-emoji">${cat.emoji || "📦"}</span>
-        <span class="cat-name">${escapeHtml(cat.name)}</span>
+        <button type="button" class="cat-name" data-act="expenses" aria-label="View ${escapeHtml(cat.name)} expenses for ${escapeHtml(monthLabelOf(currentKey()))}" aria-haspopup="dialog">${escapeHtml(cat.name)}</button>
         <span class="budget-status ${status.tone}">${status.label}</span>
       </div>
       <div class="cat-balance ${over ? "over" : ""}"><b>${fmt(Math.abs(remaining))}</b><span>${over ? "over budget" : "left to spend"}</span></div>
@@ -868,6 +868,10 @@ function renderCategories(month) {
         <button class="mini-btn" data-act="reeval">Re-evaluate</button>
         <button class="mini-btn" data-act="edit">Edit</button>
       </div>`;
+    row.onclick = (event) => {
+      if (!event.target.closest("button, input, label, a, select")) openCategoryExpenses(cat);
+    };
+    row.querySelector('[data-act="expenses"]').onclick = () => openCategoryExpenses(cat);
     row.querySelector('[data-act="reeval"]').onclick = () => openReevalModal(cat);
     row.querySelector('[data-act="edit"]').onclick = () => openCategoryModal(cat);
     row.querySelector('[data-act="split"]').onchange = (event) => {
@@ -952,6 +956,36 @@ function escapeHtml(s) {
     ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 }
 
+function openCategoryExpenses(cat) {
+  const key = currentKey();
+  const month = getMonth();
+  const own = month.expenses.filter((exp) => exp.catId === cat.id);
+  const counted = own.filter((exp) => !exp.forMonth || exp.forMonth === key)
+    .concat(incomingPrepurchases(key).filter(({ exp }) => exp.catId === cat.id).map(({ exp }) => exp));
+  const future = own.filter((exp) => exp.forMonth && exp.forMonth !== key);
+  const rows = (expenses) => [...expenses]
+    .sort((a, b) => b.date.localeCompare(a.date) || (b.createdAt || 0) - (a.createdAt || 0))
+    .map((exp) => {
+      const date = new Date(exp.date + "T12:00:00").toLocaleDateString("en-ZA", { day: "numeric", month: "short", year: "numeric" });
+      const allocation = exp.forMonth && exp.forMonth !== key
+        ? ` · For ${monthLabelOf(exp.forMonth)}`
+        : exp.prepurchased || exp.date.slice(0, 7) !== key ? " · Pre-purchased" : "";
+      return `<li class="category-expense">
+        <div class="expense-info"><div class="expense-note">${escapeHtml(exp.note || cat.name)}</div>
+          <div class="expense-meta">${escapeHtml(date + allocation)}${exp.recurringId ? " · ↻ recurring" : ""}</div></div>
+        <div class="expense-amount">${fmt(exp.amount)}</div>
+      </li>`;
+    }).join("");
+  openModal({
+    title: `${cat.name} · ${monthLabelOf(key)}`,
+    body: `<div class="category-expense-summary"><span>${counted.length} ${counted.length === 1 ? "expense" : "expenses"} · Total spent</span><b>${fmt(spentFor(month, cat.id, key))}</b></div>
+      <div class="category-expense-list">
+        ${counted.length ? `<ul>${rows(counted)}</ul>` : `<p class="hint">No expenses in this category for ${escapeHtml(monthLabelOf(key))}.</p>`}
+        ${future.length ? `<h4>Pre-purchased for later months</h4><p class="hint">Paid this month; excluded from the total above.</p><ul>${rows(future)}</ul>` : ""}
+      </div>`
+  });
+}
+
 /* ---------- modal machinery ---------- */
 
 let modalHandlers = { save: null, delete: null };
@@ -960,11 +994,14 @@ function openModal({ title, body, saveLabel = "Save", onSave, onDelete }) {
   $("modalTitle").textContent = title;
   $("modalBody").innerHTML = body;
   $("modalSave").textContent = saveLabel;
+  $("modalSave").hidden = !onSave;
+  $("modalCancel").textContent = onSave ? "Cancel" : "Close";
   $("modalDelete").hidden = !onDelete;
   modalHandlers = { save: onSave, delete: onDelete };
   $("modalBackdrop").hidden = false;
   const first = $("modalBody").querySelector("input, select");
   if (first) { first.focus(); if (first.select) first.select(); }
+  else $("modalCancel").focus();
 }
 
 function closeModal() {

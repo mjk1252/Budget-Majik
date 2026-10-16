@@ -123,6 +123,7 @@ test("category toggle renders the split and saves both enabling and disabling", 
   const context = vm.createContext({
     $: (id) => elements[id], viewYear: 2026, viewMonth: 9,
     currentKey: () => "2026-10", incomingPrepurchases: () => [],
+    monthLabelOf: () => "October 2026",
     spentFor: () => 500, remainingFor: () => 2600,
     escapeHtml: (s) => s, openCategoryModal: () => {}, openReevalModal: () => {},
     editMonth: () => month, persist: () => { saves++; },

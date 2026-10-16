@@ -6,7 +6,7 @@
 <meta name="apple-mobile-web-app-capable" content="yes" />
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
 <title>Budget Majik</title>
-<link rel="stylesheet" href="../renderer/styles.css?v=20261009-quick-balance" />
+<link rel="stylesheet" href="../renderer/styles.css?v=20261016-category-expenses" />
 <link rel="stylesheet" href="mobile.css?v=20261009-quick-balance" />
 </head>
 <body>
@@ -149,7 +149,7 @@
 
 <!-- ===== Modal ===== -->
 <div class="modal-backdrop" id="modalBackdrop" hidden>
-  <div class="modal glass-heavy" id="modal">
+  <div class="modal glass-heavy" id="modal" role="dialog" aria-modal="true" aria-labelledby="modalTitle">
     <h3 id="modalTitle">Title</h3>
     <div class="modal-body" id="modalBody"></div>
     <div class="modal-actions">
@@ -161,6 +161,6 @@
 </div>
 
 <script src="shim.js?v=20261009-sync-queue"></script>
-<script src="../renderer/app.js?v=20261009-quick-balance"></script>
+<script src="../renderer/app.js?v=20261016-category-expenses"></script>
 </body>
 </html>
