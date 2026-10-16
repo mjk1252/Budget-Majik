@@ -1,0 +1,19 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
+  <title>Budget Majik</title>
+  <defs>
+    <linearGradient id="tile" x1="0" y1="0" x2="1" y2="1">
+      <stop stop-color="#818cf8"/>
+      <stop offset=".45" stop-color="#4f46e5"/>
+      <stop offset="1" stop-color="#0ea5e9"/>
+    </linearGradient>
+    <linearGradient id="gem" x1="0" y1="0" x2="1" y2="1">
+      <stop stop-color="#fff"/>
+      <stop offset="1" stop-color="#a5f3fc"/>
+    </linearGradient>
+  </defs>
+  <rect x="1" y="1" width="62" height="62" rx="18" fill="url(#tile)"/>
+  <rect x="2" y="2" width="60" height="60" rx="17" fill="none" stroke="#fff" stroke-opacity=".25"/>
+  <path d="M31 12 51 32 31 52 11 32Z" fill="#172554" fill-opacity=".18" stroke="url(#gem)" stroke-width="5" stroke-linejoin="round"/>
+  <path d="m31 23 3 6 6 3-6 3-3 6-3-6-6-3 6-3Z" fill="url(#gem)"/>
+  <path d="m50 8 1.8 4.2L56 14l-4.2 1.8L50 20l-1.8-4.2L44 14l4.2-1.8Z" fill="#fff"/>
+</svg>
