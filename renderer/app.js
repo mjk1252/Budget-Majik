@@ -801,10 +801,19 @@ function render() {
   freeEl.textContent = fmt(trulyFree);
   freeEl.className = "stat-value " + (trulyFree < 0 ? "neg" : "pos");
 
+  // Same as above, but counting money still owed back to us as if it were in hand.
+  const outstandingTotal = totalOutstandingLoans();
+  const freeWithLoans = trulyFree + outstandingTotal;
+  const freeWithLoansEl = $("freeWithLoansValue");
+  freeWithLoansEl.textContent = fmt(freeWithLoans);
+  freeWithLoansEl.className = "stat-value " + (freeWithLoans < 0 ? "neg" : "pos");
+  $("freeWithLoansSub").textContent = outstandingTotal > 0
+    ? `+ ${fmt(outstandingTotal)} owed to you`
+    : "no outstanding loans";
+
   $("budgetTotalLabel").textContent = totalBudget ? `${fmt(totalBudget)} budgeted` : "";
   renderBalanceCheck(month);
 
-  const outstandingTotal = totalOutstandingLoans();
   $("loansLabel").textContent = outstandingTotal > 0 ? `Loans (${fmt(outstandingTotal)})` : "Loans";
 
   renderCategories(month);
