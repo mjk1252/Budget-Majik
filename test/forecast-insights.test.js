@@ -126,6 +126,9 @@ test("an automatic everyday bucket holds income minus the other budgets", () => 
   const { context } = load({ months: { "2026-10": month } });
   const got = context.getMonthFor("2026-10");
   assert.equal(got.categories[1].budget, 9000);
+  month.adjustments.push({ amount: 500 }, { amount: -200 });
+  assert.equal(context.getMonthFor("2026-10").categories[1].budget, 9300);
+  month.adjustments.length = 0;
   month.income = 5000; // other budgets exceed income
   assert.equal(context.getMonthFor("2026-10").categories[1].budget, 0);
   const seeded = context.getMonthFor("2026-11");

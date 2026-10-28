@@ -38,12 +38,14 @@ function previousMonthData(key) {
 }
 
 // An everyday bucket set to "automatic" always holds whatever is left of the
-// income after every other budget (never below zero).
+// income plus any one-off cash adjustments after every other budget (never
+// below zero).
 function applyLeftoverBudget(month) {
   const cat = month.categories.find((c) => c.everyday && c.everydayAuto);
   if (!cat) return month;
   const others = month.categories.filter((c) => c !== cat).reduce((s, c) => s + c.budget, 0);
-  cat.budget = Math.max(0, Math.round((month.income - others) * 100) / 100);
+  const adjustments = (month.adjustments || []).reduce((s, a) => s + a.amount, 0);
+  cat.budget = Math.max(0, Math.round((month.income + adjustments - others) * 100) / 100);
   return month;
 }
 
@@ -1660,7 +1662,8 @@ function openCategoryModal(cat) {
     const m = getMonth();
     const others = sum(m.categories.filter((c) => !cat || c.id !== cat.id).map((c) => c.budget));
     $("f-auto-hint").hidden = !auto;
-    $("f-auto-hint").textContent = auto ? `Income ${fmt(m.income)} − other budgets ${fmt(others)} = ${fmt(Math.max(0, m.income - others))} for this month. It updates when you change income or another budget.` : "";
+    const extra = (m.adjustments || []).reduce((s, a) => s + a.amount, 0);
+    $("f-auto-hint").textContent = auto ? `Income ${fmt(m.income)}${extra ? ` ${extra > 0 ? "+" : "−"} adjustments ${fmt(Math.abs(extra))}` : ""} − other budgets ${fmt(others)} = ${fmt(Math.max(0, m.income + extra - others))} for this month. It updates when you change income, an adjustment or another budget.` : "";
   };
   $("f-everyday").onchange = syncAutoUi;
   $("f-auto").onchange = syncAutoUi;
