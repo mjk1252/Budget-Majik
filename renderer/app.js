@@ -37,22 +37,32 @@ function previousMonthData(key) {
   return data.months[keys[keys.length - 1]];
 }
 
+// An everyday bucket set to "automatic" always holds whatever is left of the
+// income after every other budget (never below zero).
+function applyLeftoverBudget(month) {
+  const cat = month.categories.find((c) => c.everyday && c.everydayAuto);
+  if (!cat) return month;
+  const others = month.categories.filter((c) => c !== cat).reduce((s, c) => s + c.budget, 0);
+  cat.budget = Math.max(0, Math.round((month.income - others) * 100) / 100);
+  return month;
+}
+
 // Get a month for viewing. If it doesn't exist, build an in-memory seed that
 // inherits budgets + income from the most recent earlier month. Not saved
 // until the user actually changes something.
 function getMonthFor(key) {
-  if (data.months[key]) return data.months[key];
+  if (data.months[key]) return applyLeftoverBudget(data.months[key]);
   const prev = previousMonthData(key);
   if (!prev) return emptyMonth();
-  return {
+  return applyLeftoverBudget({
     income: prev.income,
     categories: prev.categories.map((c) => ({
-      id: c.id, name: c.name, emoji: c.emoji, color: c.color, everyday: !!c.everyday, budget: c.budget,
+      id: c.id, name: c.name, emoji: c.emoji, color: c.color, everyday: !!c.everyday, everydayAuto: !!c.everydayAuto, budget: c.budget,
       dailyWeeklySplit: !!c.dailyWeeklySplit, override: null
     })),
     expenses: [],
     adjustments: []
-  };
+  });
 }
 const getMonth = () => getMonthFor(currentKey());
 
@@ -119,6 +129,7 @@ function applyPrepurchases() {
 }
 
 async function persist() {
+  Object.values(data.months).forEach(applyLeftoverBudget);
   data.updatedAt = Math.max(Date.now(), (data.updatedAt || 0) + 1);
   rememberSyncState(true);
   await window.budgetStore.save(data);
@@ -1609,6 +1620,8 @@ function openCategoryModal(cat) {
       </div>
       <div class="field">
         <label class="split-toggle"><input id="f-everyday" type="checkbox" role="switch" ${cat && cat.everyday ? "checked" : ""} /><span>Everyday spending bucket</span></label>
+        <label class="split-toggle everyday-auto" id="f-auto-row"><input id="f-auto" type="checkbox" role="switch" ${cat && cat.everydayAuto ? "checked" : ""} /><span>Budget = what's left after other budgets</span></label>
+        <div class="hint" id="f-auto-hint"></div>
         <div class="hint">Use this for the category you spend "whatever" from. The forecast shows how much of it is left per day, and Insights separates everyday from planned spending. Only one category can be the bucket.</div>
       </div>
       <div class="field">
@@ -1617,14 +1630,15 @@ function openCategoryModal(cat) {
       </div>`,
     onSave: () => {
       const name = $("f-name").value.trim();
-      const budget = numVal("f-budget");
+      const auto = $("f-everyday").checked && $("f-auto").checked;
+      const budget = auto ? (cat ? cat.budget : 0) : numVal("f-budget");
       if (!name || !Number.isFinite(budget) || budget < 0) return false;
       const month = editMonth();
       if (cat) {
         const c = month.categories.find((x) => x.id === cat.id);
-        if (c) { c.name = name; c.emoji = $("f-emoji").value.trim(); c.budget = budget; c.color = pickedColor; c.dailyWeeklySplit = $("f-split").checked; c.everyday = $("f-everyday").checked; }
+        if (c) { c.name = name; c.emoji = $("f-emoji").value.trim(); c.budget = budget; c.color = pickedColor; c.dailyWeeklySplit = $("f-split").checked; c.everyday = $("f-everyday").checked; c.everydayAuto = c.everyday && $("f-auto").checked; }
       } else {
-        month.categories.push({ id: uid(), name, emoji: $("f-emoji").value.trim(), color: pickedColor, everyday: $("f-everyday").checked, budget, dailyWeeklySplit: $("f-split").checked, override: null });
+        month.categories.push({ id: uid(), name, emoji: $("f-emoji").value.trim(), color: pickedColor, everyday: $("f-everyday").checked, everydayAuto: $("f-everyday").checked && $("f-auto").checked, budget, dailyWeeklySplit: $("f-split").checked, override: null });
       }
       if ($("f-everyday").checked) {
         const keep = cat ? cat.id : month.categories[month.categories.length - 1].id;
@@ -1639,6 +1653,18 @@ function openCategoryModal(cat) {
       persist();
     } : null
   });
+  const syncAutoUi = () => {
+    const bucket = $("f-everyday").checked, auto = bucket && $("f-auto").checked;
+    $("f-auto-row").hidden = !bucket;
+    $("f-budget").disabled = auto;
+    const m = getMonth();
+    const others = sum(m.categories.filter((c) => !cat || c.id !== cat.id).map((c) => c.budget));
+    $("f-auto-hint").hidden = !auto;
+    $("f-auto-hint").textContent = auto ? `Income ${fmt(m.income)} − other budgets ${fmt(others)} = ${fmt(Math.max(0, m.income - others))} for this month. It updates when you change income or another budget.` : "";
+  };
+  $("f-everyday").onchange = syncAutoUi;
+  $("f-auto").onchange = syncAutoUi;
+  syncAutoUi();
   $("f-emoji-picks").onclick = (event) => {
     const btn = event.target.closest("[data-emoji]");
     if (btn) $("f-emoji").value = btn.dataset.emoji;

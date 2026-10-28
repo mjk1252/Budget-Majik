@@ -245,7 +245,7 @@ function materializeMonth_(data, key) {
   data.months[key] = previous ? {
     income: previous.income,
     categories: (previous.categories || []).map(function (category) {
-      return { id: category.id, name: category.name, emoji: category.emoji, color: category.color, everyday: !!category.everyday,
+      return { id: category.id, name: category.name, emoji: category.emoji, color: category.color, everyday: !!category.everyday, everydayAuto: !!category.everydayAuto,
         budget: category.budget, dailyWeeklySplit: !!category.dailyWeeklySplit, override: null };
     }),
     expenses: [], adjustments: []

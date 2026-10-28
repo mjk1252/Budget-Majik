@@ -6,6 +6,7 @@ const vm = require("node:vm");
 
 const source = fs.readFileSync(path.join(__dirname, "..", "renderer", "app.js"), "utf8");
 const syncSource = source.slice(source.indexOf("async function persist()"), source.indexOf('$("syncBtn").onclick'));
+const leftoverSource = source.slice(source.indexOf("function applyLeftoverBudget("), source.indexOf("// Get a month for viewing."));
 const copy = (v) => JSON.parse(JSON.stringify(v));
 const url = "https://script.google.com/macros/s/test/exec";
 const budget = () => ({ updatedAt: 10, months: { "2026-10": {
@@ -51,7 +52,7 @@ function harness(initial = budget(), server = budget()) {
     setTimeout: (callback, delay) => { timers.set(++count, { callback, delay }); return count; },
     clearTimeout: (id) => timers.delete(id)
   });
-  vm.runInContext(`let data = initial; ${syncSource}
+  vm.runInContext(`let data = initial; ${leftoverSource}\n${syncSource}
     globalThis.api = { persist, pushToSheets, pullFromSheets, resetSyncConnection,
       data: () => data, base: () => syncBaseData, busy: () => syncBusy };`, context);
   return {

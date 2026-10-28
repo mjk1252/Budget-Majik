@@ -116,3 +116,19 @@ test("the everyday bucket is not treated as a one-off and feeds wrap-up, donut a
   assert.equal(w.plannedSpent, 8000);
   assert.match(context.donutHtml("2026-10"), /everyday/);
 });
+
+test("an automatic everyday bucket holds income minus the other budgets", () => {
+  const month = {
+    income: 20000,
+    categories: [cat("rent", "Rent", 8000), cat("food", "Spend", 1, { everyday: true, everydayAuto: true }), cat("car", "Car", 3000)],
+    expenses: [], adjustments: []
+  };
+  const { context } = load({ months: { "2026-10": month } });
+  const got = context.getMonthFor("2026-10");
+  assert.equal(got.categories[1].budget, 9000);
+  month.income = 5000; // other budgets exceed income
+  assert.equal(context.getMonthFor("2026-10").categories[1].budget, 0);
+  const seeded = context.getMonthFor("2026-11");
+  assert.equal(seeded.categories[1].everydayAuto, true);
+  assert.equal(seeded.categories[1].budget, 0);
+});
