@@ -116,7 +116,7 @@ test("inherited settings, allocated pre-purchases and overrides feed the daily a
 });
 
 test("category toggle renders the split and saves both enabling and disabling", () => {
-  const elements = { catList: { innerHTML: "", appendChild(row) { this.row = row; } }, catEmpty: {} };
+  const elements = { catList: { innerHTML: "", classList: { toggle() {} }, appendChild(row) { this.row = row; } }, catEmpty: {} };
   const cat = { id: "food", name: "Food", budget: 3100, dailyWeeklySplit: false };
   const month = { categories: [cat] };
   let saves = 0;
@@ -127,8 +127,9 @@ test("category toggle renders the split and saves both enabling and disabling", 
     spentFor: () => 500, remainingFor: () => 2600,
     escapeHtml: (s) => s, openCategoryModal: () => {}, openReevalModal: () => {},
     editMonth: () => month, persist: () => { saves++; },
+    freshView: false, catColor: () => "#7dd3fc",
     document: { createElement: () => ({
-      innerHTML: "", handlers: {},
+      innerHTML: "", handlers: {}, style: { setProperty() {} },
       querySelector(selector) { return this.handlers[selector] ||= {}; }
     }) }
   });

@@ -47,7 +47,7 @@ function getMonthFor(key) {
   return {
     income: prev.income,
     categories: prev.categories.map((c) => ({
-      id: c.id, name: c.name, emoji: c.emoji, budget: c.budget,
+      id: c.id, name: c.name, emoji: c.emoji, color: c.color, budget: c.budget,
       dailyWeeklySplit: !!c.dailyWeeklySplit, override: null
     })),
     expenses: [],
@@ -745,6 +745,408 @@ function splitDetailsHtml(split, cat, remaining) {
   </div>`;
 }
 
+/* ---------- category colours & emoji ---------- */
+
+const CAT_PALETTE = ["#7dd3fc", "#6ee7a8", "#fbbf24", "#fb7185", "#c4b5fd",
+  "#f9a8d4", "#5eead4", "#fdba74", "#a3e635", "#93c5fd"];
+const EMOJI_CHOICES = ["🛒", "🍽️", "☕", "⛽", "🚗", "🏠", "💡", "📱", "🎬", "🎁",
+  "👕", "💊", "🐶", "✈️", "🎓", "💇", "🏋️", "🍺", "🧾", "💰"];
+
+function catColor(cat, index = 0) {
+  if (cat && /^#[0-9a-f]{6}$/i.test(cat.color || "")) return cat.color;
+  return CAT_PALETTE[index % CAT_PALETTE.length];
+}
+
+/* ---------- little touches: count-up numbers and haptics ---------- */
+
+const prefersReducedMotion = () =>
+  typeof matchMedia === "function" && matchMedia("(prefers-reduced-motion: reduce)").matches;
+
+// Roll a money figure from what's on screen to its new value.
+function setMoney(el, value) {
+  const text = fmt(value);
+  const from = el._shown === undefined ? 0 : el._shown;
+  el._shown = value;
+  if (typeof requestAnimationFrame !== "function" || prefersReducedMotion() || from === value) {
+    el.textContent = text;
+    return;
+  }
+  cancelAnimationFrame(el._raf);
+  const start = performance.now();
+  const step = (now) => {
+    const p = Math.min(1, (now - start) / 520);
+    const eased = 1 - Math.pow(1 - p, 3);
+    el.textContent = p < 1 ? fmt(Math.round(from + (value - from) * eased)) : text;
+    if (p < 1) el._raf = requestAnimationFrame(step);
+  };
+  el._raf = requestAnimationFrame(step);
+}
+
+let hapticSwitch = null;
+// Android vibrates; iOS Safari gives a light tap when a switch checkbox is toggled.
+function haptic(ms = 10) {
+  try {
+    if (typeof matchMedia !== "function" || !matchMedia("(pointer: coarse)").matches) return;
+    if (navigator.vibrate) { navigator.vibrate(ms); return; }
+    if (!hapticSwitch) {
+      const label = document.createElement("label");
+      label.setAttribute("aria-hidden", "true");
+      label.style.cssText = "position:fixed;left:-99px;top:-99px;opacity:0;pointer-events:none";
+      label.innerHTML = '<input type="checkbox" switch tabindex="-1">';
+      document.body.appendChild(label);
+      hapticSwitch = label;
+    }
+    hapticSwitch.click();
+  } catch { /* haptics are a nicety, never an error */ }
+}
+
+/* ---------- month arithmetic & totals ---------- */
+
+function prevMonthOfKey(key) {
+  const y = Number(key.slice(0, 4)), mIdx = Number(key.slice(5, 7)) - 1;
+  return mIdx === 0 ? monthKey(y - 1, 11) : monthKey(y, mIdx - 1);
+}
+const daysInMonthOfKey = (key) => new Date(Number(key.slice(0, 4)), Number(key.slice(5, 7)), 0).getDate();
+const sum = (list) => list.reduce((s, n) => s + n, 0);
+
+function fmtShort(n) {
+  const abs = Math.abs(n);
+  const body = abs >= 10000 ? `${Math.round(abs / 1000)}k` : abs >= 1000 ? `${(abs / 1000).toFixed(1).replace(/\.0$/, "")}k` : String(Math.round(abs));
+  return `${n < 0 ? "−" : ""}R${body}`;
+}
+
+// Same spend rules as the "Spent so far" card, for any month.
+function monthTotals(key) {
+  const month = getMonthFor(key);
+  const preBought = sum(month.expenses.filter((e) => e.forMonth).map((e) => e.amount));
+  const preIncoming = sum(incomingPrepurchases(key).map((p) => p.exp.amount));
+  return {
+    month,
+    income: month.income,
+    budget: sum(month.categories.map((c) => c.budget)),
+    spent: sum(month.expenses.map((e) => e.amount)) - preBought + preIncoming
+  };
+}
+
+// Cash spend per day of the month (pre-purchases for other months excluded).
+function dailyTotals(key) {
+  const out = new Array(daysInMonthOfKey(key)).fill(0);
+  for (const e of getMonthFor(key).expenses) {
+    if (e.forMonth || e.date.slice(0, 7) !== key) continue;
+    const d = Number(e.date.slice(8, 10)) - 1;
+    if (d >= 0 && d < out.length) out[d] += e.amount;
+  }
+  return out;
+}
+
+/* ---------- forecast ---------- */
+
+const FORECAST_LUMP_SHARE = 0.5;
+
+// Amounts that count toward a category's budget in this month.
+function categoryAmounts(month, catId, key) {
+  const own = month.expenses
+    .filter((e) => e.catId === catId && (!e.forMonth || e.forMonth === key))
+    .map((e) => e.amount);
+  const incoming = incomingPrepurchases(key).filter((p) => p.exp.catId === catId).map((p) => p.exp.amount);
+  return own.concat(incoming);
+}
+
+// Project the rest of the month for one category. Single big purchases (rent,
+// a bulk shop: at least half the budget) are treated as one-offs and left out
+// of the daily rate. Early in the month the rate leans on the planned daily
+// budget; by month end it is entirely your actual pace.
+function forecastCategory(amounts, budget, remaining, year, month, now = new Date()) {
+  if (now.getFullYear() !== year || now.getMonth() !== month) return null;
+  const days = new Date(year, month + 1, 0).getDate();
+  const elapsed = now.getDate();
+  const lumps = budget > 0 ? sum(amounts.filter((a) => a >= budget * FORECAST_LUMP_SHARE)) : 0;
+  const everyday = sum(amounts) - lumps;
+  const weight = elapsed / days;
+  const planned = Math.max(0, budget - lumps) / days;
+  const rate = (everyday / elapsed) * weight + planned * (1 - weight);
+  const future = rate * (days - elapsed);
+  return { rate, future, projectedRemaining: remaining - future };
+}
+
+function remainingForKey(month, cat, key) {
+  const spent = spentFor(month, cat.id, key);
+  return cat.override ? cat.override.value - (spent - cat.override.spentAt) : cat.budget - spent;
+}
+
+// Forecast every category of the in-progress month; null for any other month.
+function forecastAll(month, key, now = new Date()) {
+  const year = Number(key.slice(0, 4)), mIdx = Number(key.slice(5, 7)) - 1;
+  if (now.getFullYear() !== year || now.getMonth() !== mIdx) return null;
+  const rows = {};
+  const atRisk = [];
+  let future = 0;
+  for (const cat of month.categories) {
+    const remaining = remainingForKey(month, cat, key);
+    const f = forecastCategory(categoryAmounts(month, cat.id, key), cat.budget, remaining, year, mIdx, now);
+    rows[cat.id] = f;
+    future += f.future;
+    if (remaining >= 0 && f.projectedRemaining < 0) atRisk.push(cat);
+  }
+  return { rows, future, atRisk };
+}
+
+/* ---------- end-of-month wrap-up ---------- */
+
+// Consecutive months, ending at `key`, that finished within total budget.
+function underBudgetStreak(key) {
+  let n = 0;
+  for (let k = key; data.months[k]; k = prevMonthOfKey(k)) {
+    const t = monthTotals(k);
+    if (!(t.budget > 0 && t.spent > 0 && t.spent <= t.budget)) break;
+    n++;
+  }
+  return n;
+}
+
+function monthWrapUp(key) {
+  const t = monthTotals(key);
+  const cats = t.month.categories.map((cat, i) => {
+    const spent = spentFor(t.month, cat.id, key);
+    return { cat, spent, budget: cat.budget, color: catColor(cat, i) };
+  });
+  const counted = t.month.expenses.filter((e) => !e.forMonth && e.date.slice(0, 7) === key);
+  const daily = dailyTotals(key);
+  const busiest = Math.max(...daily);
+  return {
+    key, ...t,
+    saved: t.income - t.spent,
+    savingsRate: t.income > 0 ? (t.income - t.spent) / t.income : null,
+    withinBudget: t.budget > 0 && t.spent <= t.budget,
+    overs: cats.filter((c) => c.budget > 0 && c.spent > c.budget)
+      .map((c) => ({ ...c, by: c.spent - c.budget })).sort((a, b) => b.by - a.by),
+    wins: cats.filter((c) => c.budget > 0 && c.spent <= c.budget && c.spent > 0)
+      .map((c) => ({ ...c, left: c.budget - c.spent })).sort((a, b) => b.left - a.left),
+    mix: cats.filter((c) => c.spent > 0).sort((a, b) => b.spent - a.spent),
+    biggest: counted.slice().sort((a, b) => b.amount - a.amount)[0] || null,
+    busiestDay: busiest > 0 ? { day: daily.indexOf(busiest) + 1, amount: busiest } : null,
+    streak: underBudgetStreak(key)
+  };
+}
+
+function openWrapUp(key) {
+  const w = monthWrapUp(key);
+  const label = monthLabelOf(key);
+  const name = (c) => `${c.cat.emoji || "📦"} ${escapeHtml(c.cat.name)}`;
+  const day = (n) => new Date(Number(key.slice(0, 4)), Number(key.slice(5, 7)) - 1, n).toLocaleDateString("en-US", { month: "short", day: "numeric" });
+  const tone = w.budget <= 0 ? "neutral" : w.withinBudget ? "good" : "bad";
+  const headline = w.budget <= 0 ? `You spent ${fmt(w.spent)}`
+    : w.withinBudget ? `${fmt(w.budget - w.spent)} under budget 🎉` : `${fmt(w.spent - w.budget)} over budget`;
+  const good = [];
+  if (w.withinBudget) good.push(`Finished within your ${fmt(w.budget)} budget.`);
+  if (w.savingsRate !== null && w.saved > 0) good.push(`Kept ${fmt(w.saved)} of income (${Math.round(w.savingsRate * 100)}%).`);
+  for (const c of w.wins.slice(0, 2)) good.push(`${name(c)} came in ${fmt(c.left)} under.`);
+  if (w.streak >= 2) good.push(`🔥 ${w.streak} months in a row within budget.`);
+  const watch = [];
+  for (const c of w.overs.slice(0, 3)) watch.push(`${name(c)} went ${fmt(c.by)} over its ${fmt(c.budget)} budget.`);
+  if (w.savingsRate !== null && w.saved < 0) watch.push(`Spent ${fmt(-w.saved)} more than the month's income.`);
+  const total = Math.max(1, sum(w.mix.map((c) => c.spent)));
+  openModal({
+    title: `${label} wrap-up`,
+    body: `<div class="wrap">
+      <div class="wrap-hero ${tone}"><span>${escapeHtml(label)}</span><b>${headline}</b>
+        <small>${fmt(w.spent)} spent${w.budget > 0 ? ` of ${fmt(w.budget)} budgeted` : ""}</small></div>
+      <div class="wrap-stats">
+        <div><span>Income</span><b>${fmt(w.income)}</b></div>
+        <div><span>Saved</span><b class="${w.saved < 0 ? "neg" : "pos"}">${fmt(w.saved)}</b></div>
+        <div><span>Savings rate</span><b>${w.savingsRate === null ? "–" : `${Math.round(w.savingsRate * 100)}%`}</b></div>
+      </div>
+      ${w.mix.length ? `<div class="wrap-mix" role="img" aria-label="Spending by category">${w.mix.map((c) =>
+        `<i style="flex:${c.spent / total};background:${c.color}" title="${escapeHtml(c.cat.name)} ${fmt(c.spent)}"></i>`).join("")}</div>
+        <div class="wrap-legend">${w.mix.slice(0, 5).map((c) =>
+          `<span><i style="background:${c.color}"></i>${escapeHtml(c.cat.name)} <b>${Math.round((c.spent / total) * 100)}%</b></span>`).join("")}</div>` : ""}
+      ${good.length ? `<h4>What went well</h4><ul class="wrap-list good">${good.map((g) => `<li>${g}</li>`).join("")}</ul>` : ""}
+      ${watch.length ? `<h4>Worth watching</h4><ul class="wrap-list bad">${watch.map((g) => `<li>${g}</li>`).join("")}</ul>` : ""}
+      ${w.biggest || w.busiestDay ? `<div class="wrap-facts">
+        ${w.biggest ? `<div>Biggest purchase <b>${fmt(w.biggest.amount)}</b> · ${escapeHtml(w.biggest.note || "Expense")} · ${day(Number(w.biggest.date.slice(8, 10)))}</div>` : ""}
+        ${w.busiestDay ? `<div>Busiest day <b>${day(w.busiestDay.day)}</b> · ${fmt(w.busiestDay.amount)}</div>` : ""}</div>` : ""}
+    </div>`
+  });
+}
+
+/* ---------- insights overview (charts) ---------- */
+
+// Cumulative spend this month vs last, the budget line, and the forecast.
+function trendChartHtml(key) {
+  const now = new Date();
+  const days = daysInMonthOfKey(key);
+  const todayKey = monthKey(now.getFullYear(), now.getMonth());
+  const upTo = key === todayKey ? now.getDate() : key < todayKey ? days : 0;
+  const cumulative = (list) => { let t = 0; return list.map((v) => (t += v)); };
+  const cur = cumulative(dailyTotals(key)).slice(0, upTo);
+  const prev = cumulative(dailyTotals(prevMonthOfKey(key)));
+  const totals = monthTotals(key);
+  const fc = key === todayKey ? forecastAll(totals.month, key, now) : null;
+  const curEnd = cur.length ? cur[cur.length - 1] : 0;
+  const projected = fc && cur.length ? curEnd + fc.future : null;
+  const top = (Math.max(curEnd, prev[prev.length - 1] || 0, projected || 0, totals.budget) || 1) * 1.08;
+  const W = 560, H = 210, L = 46, R = 12, T = 12, B = 26;
+  const x = (d) => L + ((Math.min(d, days) - 1) / Math.max(1, days - 1)) * (W - L - R);
+  const y = (v) => T + (H - T - B) * (1 - v / top);
+  const line = (series) => series.map((v, i) => `${i ? "L" : "M"}${x(i + 1).toFixed(1)} ${y(v).toFixed(1)}`).join(" ");
+  const xTicks = [1, 8, 15, 22, days].filter((d, i, a) => a.indexOf(d) === i && (d === days || days - d >= 3));
+  const yTicks = [0, top / 2, top];
+  return `<svg class="trend-svg" viewBox="0 0 ${W} ${H}" role="img" aria-label="Cumulative spending this month compared with last month">
+    ${yTicks.map((v) => `<line class="grid" x1="${L}" x2="${W - R}" y1="${y(v).toFixed(1)}" y2="${y(v).toFixed(1)}"/><text class="tick" x="${L - 6}" y="${(y(v) + 4).toFixed(1)}" text-anchor="end">${fmtShort(v)}</text>`).join("")}
+    ${xTicks.map((d) => `<text class="tick" x="${x(d).toFixed(1)}" y="${H - 6}" text-anchor="middle">${d}</text>`).join("")}
+    ${totals.budget > 0 ? `<line class="budget-line" x1="${L}" x2="${W - R}" y1="${y(totals.budget).toFixed(1)}" y2="${y(totals.budget).toFixed(1)}"/><text class="tick budget-tick" x="${W - R}" y="${(y(totals.budget) - 5).toFixed(1)}" text-anchor="end">Budget ${fmtShort(totals.budget)}</text>` : ""}
+    ${prev.length ? `<path class="line-prev" d="${line(prev)}"/>` : ""}
+    ${projected !== null ? `<path class="line-forecast" d="M${x(upTo).toFixed(1)} ${y(curEnd).toFixed(1)} L${x(days).toFixed(1)} ${y(projected).toFixed(1)}"/><circle class="dot-forecast" cx="${x(days).toFixed(1)}" cy="${y(projected).toFixed(1)}" r="3.5"/>` : ""}
+    ${cur.length ? `<path class="line-cur" d="${line(cur)}"/><circle class="dot-cur" cx="${x(cur.length).toFixed(1)}" cy="${y(curEnd).toFixed(1)}" r="4"/>` : ""}
+  </svg>
+  <div class="chart-legend">
+    <span><i class="lg cur"></i>${MONTH_NAMES[Number(key.slice(5, 7)) - 1]}${cur.length ? ` · ${fmt(curEnd)}` : ""}</span>
+    ${prev.length ? `<span><i class="lg prev"></i>${MONTH_NAMES[Number(prevMonthOfKey(key).slice(5, 7)) - 1]}</span>` : ""}
+    ${projected !== null ? `<span><i class="lg fc"></i>Forecast · ${fmt(projected)}</span>` : ""}
+  </div>`;
+}
+
+function donutHtml(key) {
+  const w = monthWrapUp(key);
+  if (!w.mix.length) return `<div class="empty-hint">No spending in ${escapeHtml(monthLabelOf(key))} yet.</div>`;
+  const slices = w.mix.slice(0, 6).map((c) => ({ name: c.cat.name, spent: c.spent, color: c.color }));
+  const rest = sum(w.mix.slice(6).map((c) => c.spent));
+  if (rest > 0) slices.push({ name: "Other", spent: rest, color: "#94a3b8" });
+  const total = sum(slices.map((s) => s.spent));
+  let offset = 25;
+  const arcs = slices.map((s) => {
+    const pct = (s.spent / total) * 100;
+    const arc = `<circle class="donut-arc" cx="18" cy="18" r="15.9155" fill="none" stroke="${s.color}" stroke-width="4.4" stroke-dasharray="${Math.max(0, pct - 0.6).toFixed(2)} ${(100 - pct + 0.6).toFixed(2)}" stroke-dashoffset="${offset.toFixed(2)}"><title>${escapeHtml(s.name)} ${fmt(s.spent)}</title></circle>`;
+    offset -= pct;
+    return arc;
+  }).join("");
+  return `<div class="donut-wrap">
+    <svg class="donut" viewBox="0 0 36 36" role="img" aria-label="Spending by category">${arcs}
+      <text x="18" y="17.4" text-anchor="middle" class="donut-total">${fmtShort(total)}</text>
+      <text x="18" y="22" text-anchor="middle" class="donut-sub">spent</text></svg>
+    <ul class="donut-legend">${slices.map((s) => `<li><i style="background:${s.color}"></i><span>${escapeHtml(s.name)}</span><b>${Math.round((s.spent / total) * 100)}%</b></li>`).join("")}</ul>
+  </div>`;
+}
+
+function heatmapHtml(key) {
+  const daily = dailyTotals(key);
+  const peak = Math.max(...daily);
+  const now = new Date();
+  const today = localDate(now);
+  const lead = (new Date(Number(key.slice(0, 4)), Number(key.slice(5, 7)) - 1, 1).getDay() + 6) % 7; // Monday first
+  const cells = ['<span class="hm-dow">M</span><span class="hm-dow">T</span><span class="hm-dow">W</span><span class="hm-dow">T</span><span class="hm-dow">F</span><span class="hm-dow">S</span><span class="hm-dow">S</span>'];
+  for (let i = 0; i < lead; i++) cells.push('<span class="hm-cell blank"></span>');
+  daily.forEach((amount, i) => {
+    const date = `${key}-${String(i + 1).padStart(2, "0")}`;
+    const a = peak > 0 && amount > 0 ? 0.18 + 0.72 * (amount / peak) : 0;
+    cells.push(`<span class="hm-cell${date > today ? " future" : ""}${date === today ? " today" : ""}" style="--a:${a.toFixed(2)}" title="${date}: ${amount > 0 ? fmt(amount) : "nothing spent"}">${i + 1}</span>`);
+  });
+  return `<div class="heatmap">${cells.join("")}</div>
+    <div class="chart-legend"><span>Less</span><span class="hm-scale"><i style="--a:0.18"></i><i style="--a:0.4"></i><i style="--a:0.65"></i><i style="--a:0.9"></i></span><span>More</span></div>`;
+}
+
+// Categories running well above or below their recent norm (3-month average
+// of the months before this one; the current month is compared at forecast).
+function unusualSpend(key, now = new Date()) {
+  const month = getMonthFor(key);
+  const fc = forecastAll(month, key, now);
+  if (fc && now.getDate() < 5) return [];
+  const prevKeys = [];
+  for (let k = prevMonthOfKey(key), i = 0; i < 3; k = prevMonthOfKey(k), i++) {
+    if (data.months[k] && data.months[k].expenses.length) prevKeys.push(k);
+  }
+  if (!prevKeys.length) return [];
+  const avg = new Map();
+  for (const k of prevKeys) {
+    const m = getMonthFor(k);
+    for (const c of m.categories) {
+      const n = c.name.toLowerCase();
+      avg.set(n, (avg.get(n) || 0) + spentFor(m, c.id, k) / prevKeys.length);
+    }
+  }
+  const out = [];
+  month.categories.forEach((cat, i) => {
+    const base = avg.get(cat.name.toLowerCase());
+    if (!base || base < 50) return;
+    const now_ = spentFor(month, cat.id, key) + (fc ? fc.rows[cat.id].future : 0);
+    const pct = (now_ - base) / base;
+    if (Math.abs(pct) >= 0.4 && Math.abs(now_ - base) >= 50) out.push({ cat, color: catColor(cat, i), pct, value: now_, base });
+  });
+  return out.sort((a, b) => Math.abs(b.pct) - Math.abs(a.pct)).slice(0, 4);
+}
+
+function unusualHtml(key) {
+  const items = unusualSpend(key);
+  if (!items.length) return `<div class="empty-hint">Nothing unusual — spending is in line with your recent months.</div>`;
+  const current = forecastAll(getMonthFor(key), key) !== null;
+  return `<ul class="alert-list">${items.map((u) => `<li class="${u.pct > 0 ? "up" : "down"}">
+    <span class="alert-emoji">${u.cat.emoji || "📦"}</span>
+    <span><b>${escapeHtml(u.cat.name)}</b> ${current ? "is on pace for" : "was"} ${Math.round(Math.abs(u.pct) * 100)}% ${u.pct > 0 ? "above" : "below"} its usual
+      <small>${fmt(u.value)} vs ${fmt(u.base)} 3-month average</small></span></li>`).join("")}</ul>`;
+}
+
+function renderInsightsOverview() {
+  const key = currentKey();
+  const t = monthTotals(key);
+  const hasData = t.month.expenses.length > 0;
+  $("insightsOverview").innerHTML = `
+    <div class="ov-head">
+      <h2>${escapeHtml(monthLabelOf(key))} overview</h2>
+      <button class="pill-btn" id="wrapUpBtn" ${hasData ? "" : "disabled"}>✨ Month wrap-up</button>
+    </div>
+    <div class="ov-grid">
+      <div class="ov-card ov-wide"><h3>Spending pace</h3>${trendChartHtml(key)}</div>
+      <div class="ov-card"><h3>Where it went</h3>${donutHtml(key)}</div>
+      <div class="ov-card"><h3>Daily spend</h3>${heatmapHtml(key)}</div>
+      <div class="ov-card ov-wide"><h3>Heads-up</h3>${unusualHtml(key)}</div>
+    </div>`;
+  $("wrapUpBtn").onclick = () => openWrapUp(key);
+}
+
+/* ---------- month strip: forecast, or wrap-up for finished months ---------- */
+
+function renderMonthStrip(month, totalSpent, cashLeft, forecast) {
+  const strip = $("monthStrip");
+  const key = currentKey();
+  const now = new Date();
+  const thisKey = monthKey(now.getFullYear(), now.getMonth());
+  const budget = sum(month.categories.map((c) => c.budget));
+  let html = "";
+  if (forecast && budget > 0) {
+    const projected = totalSpent + forecast.future;
+    const diff = budget - projected;
+    const scale = Math.max(projected, budget, 1);
+    const streak = underBudgetStreak(prevMonthOfKey(key));
+    const risk = forecast.atRisk.length
+      ? `<div class="ms-risk">⚠ ${forecast.atRisk.slice(0, 3).map((c) => `${c.emoji || "📦"} ${escapeHtml(c.name)}`).join(", ")} ${forecast.atRisk.length > 3 ? `+${forecast.atRisk.length - 3} more ` : ""}likely to run out before month end</div>` : "";
+    html = `<div class="ms-main">
+        <div class="ms-eyebrow">📈 Month-end forecast</div>
+        <div class="ms-big ${diff >= 0 ? "good" : "bad"}">${fmt(Math.abs(diff))} <span>${diff >= 0 ? "under" : "over"} budget</span></div>
+        <div class="ms-sub">On pace to spend <b>${fmt(projected)}</b> of <b>${fmt(budget)}</b> · finishing with about <b>${fmt(cashLeft - forecast.future)}</b> cash</div>
+        <div class="ms-bar" aria-hidden="true">
+          <i class="ms-spent ${diff >= 0 ? "good" : "bad"}" style="width:${Math.min(100, (totalSpent / scale) * 100).toFixed(1)}%"></i>
+          <i class="ms-ghost" style="left:${Math.min(100, (totalSpent / scale) * 100).toFixed(1)}%;width:${Math.max(0, Math.min(100, (projected / scale) * 100) - Math.min(100, (totalSpent / scale) * 100)).toFixed(1)}%"></i>
+          <i class="ms-budget" style="left:${((budget / scale) * 100).toFixed(1)}%"></i>
+        </div>
+        ${risk}
+      </div>
+      <div class="ms-side">${streak >= 1 ? `<span class="ms-chip" title="Months in a row finished within budget">🔥 ${streak}-month streak</span>` : ""}
+        <span class="ms-note">Based on your pace so far, blended with your budget early in the month.</span></div>`;
+  } else if (key < thisKey && month.expenses.length) {
+    const w = monthWrapUp(key);
+    html = `<div class="ms-main">
+        <div class="ms-eyebrow">🏁 ${escapeHtml(monthLabelOf(key))} is wrapped</div>
+        <div class="ms-big ${w.budget <= 0 ? "" : w.withinBudget ? "good" : "bad"}">${w.budget > 0 ? `${fmt(Math.abs(w.budget - w.spent))} <span>${w.withinBudget ? "under" : "over"} budget</span>` : `${fmt(w.spent)} <span>spent</span>`}</div>
+        <div class="ms-sub">${w.savingsRate !== null ? `You kept <b>${fmt(w.saved)}</b> (${Math.round(w.savingsRate * 100)}% of income)` : "See how the month went"}${w.streak >= 2 ? ` · 🔥 ${w.streak}-month streak` : ""}</div>
+      </div>
+      <div class="ms-side"><button class="pill-btn primary" id="msWrapBtn">✨ See wrap-up</button></div>`;
+  }
+  strip.hidden = !html || insightsOpen;
+  strip.innerHTML = html;
+  const wrapBtn = $("msWrapBtn");
+  if (wrapBtn) wrapBtn.onclick = () => openWrapUp(key);
+}
+
 /* ---------- rendering ---------- */
 
 function render() {
@@ -774,15 +1176,15 @@ function render() {
   const bankTarget = cashLeft - preBought;
   const trulyFree = month.income - totalSpent - totalRemaining - netLoanCash + totalAdjustments;
 
-  $("incomeValue").textContent = fmt(month.income);
-  $("spentValue").textContent = fmt(totalSpent);
+  setMoney($("incomeValue"), month.income);
+  setMoney($("spentValue"), totalSpent);
   $("spentSub").textContent = [
     totalBudget ? `of ${fmt(totalBudget)} budgeted` : "",
     preBought > 0 ? `🛒 ${fmt(preBought)} on credit for next month` : "",
     preIncoming > 0 ? `incl. 🛒 ${fmt(preIncoming)} pre-purchased last month` : ""
   ].filter(Boolean).join(" · ") || " ";
   const cashEl = $("cashLeftValue");
-  cashEl.textContent = fmt(cashLeft);
+  setMoney(cashEl, cashLeft);
   cashEl.className = "stat-value " + (cashLeft < 0 ? "neg" : "");
   $("cashLeftSub").textContent = [
     "income − spent",
@@ -792,20 +1194,20 @@ function render() {
     "tap to adjust"
   ].filter(Boolean).join(" · ");
   const bankTargetEl = $("bankTargetValue");
-  bankTargetEl.textContent = fmt(bankTarget);
+  setMoney(bankTargetEl, bankTarget);
   bankTargetEl.className = "stat-value " + (bankTarget < 0 ? "neg" : "");
   $("bankTargetSub").textContent = preBought > 0
     ? `cash left − ${fmt(preBought)} allocated ahead`
     : "same as cash left · nothing allocated ahead";
   const freeEl = $("freeValue");
-  freeEl.textContent = fmt(trulyFree);
+  setMoney(freeEl, trulyFree);
   freeEl.className = "stat-value " + (trulyFree < 0 ? "neg" : "pos");
 
   // Same as above, but counting money still owed back to us as if it were in hand.
   const outstandingTotal = totalOutstandingLoans();
   const freeWithLoans = trulyFree + outstandingTotal;
   const freeWithLoansEl = $("freeWithLoansValue");
-  freeWithLoansEl.textContent = fmt(freeWithLoans);
+  setMoney(freeWithLoansEl, freeWithLoans);
   freeWithLoansEl.className = "stat-value " + (freeWithLoans < 0 ? "neg" : "pos");
   $("freeWithLoansSub").textContent = outstandingTotal > 0
     ? `+ ${fmt(outstandingTotal)} owed to you`
@@ -816,13 +1218,17 @@ function render() {
 
   $("loansLabel").textContent = outstandingTotal > 0 ? `Loans (${fmt(outstandingTotal)})` : "Loans";
 
-  renderCategories(month);
+  const forecast = forecastAll(month, currentKey());
+  renderMonthStrip(month, totalSpent, cashLeft, forecast);
+  renderCategories(month, forecast);
   renderExpenses(month);
 }
 
-function renderCategories(month) {
+function renderCategories(month, forecast = null) {
   const list = $("catList");
   list.innerHTML = "";
+  list.classList.toggle("enter", freshView);
+  freshView = false;
   $("catEmpty").hidden = month.categories.length > 0;
 
   // pace marker only makes sense on the real, in-progress month
@@ -832,7 +1238,7 @@ function renderCategories(month) {
   const monthElapsed = isCurrentMonth ? now.getDate() / daysInMonth : 0;
   const incoming = incomingPrepurchases(currentKey());
 
-  for (const cat of month.categories) {
+  month.categories.forEach((cat, index) => {
     const preAmt = incoming
       .filter((p) => p.exp.catId === cat.id)
       .reduce((s, p) => s + p.exp.amount, 0);
@@ -855,6 +1261,11 @@ function renderCategories(month) {
 
     const row = document.createElement("div");
     row.className = `cat-row cat-status-${status.tone}`;
+    row.style.setProperty("--cat", catColor(cat, index));
+    row.style.setProperty("--i", index);
+    const fc = forecast && forecast.rows[cat.id];
+    const projSpent = fc ? spent + fc.future : 0;
+    const projPct = fc && barTotal > 0 ? Math.min(100, (projSpent / barTotal) * 100) : 0;
     row.innerHTML = `
       <div class="cat-top">
         <span class="cat-emoji">${cat.emoji || "📦"}</span>
@@ -864,10 +1275,12 @@ function renderCategories(month) {
       <div class="cat-balance ${over ? "over" : ""}"><b>${fmt(Math.abs(remaining))}</b><span>${over ? "over budget" : "left to spend"}</span></div>
       <div class="cat-budget-meta"><span><b>${fmt(spent)}</b> spent</span><span><b>${fmt(cat.budget)}</b> monthly budget</span></div>
       <div class="bar" role="progressbar" aria-label="${escapeHtml(cat.name)} budget spent" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${pct.toFixed(1)}" aria-valuetext="${fmt(spent)} spent of ${fmt(cat.budget)} budget" title="${isCurrentMonth ? `${Math.round(monthElapsed * 100)}% through the month · ${Math.round(spentFrac * 100)}% of budget used` : ""}">
+        ${fc && projPct > pct + 0.5 && !over ? `<div class="bar-ghost" style="width:${projPct.toFixed(1)}%"></div>` : ""}
         <div class="bar-fill ${status.tone === "neutral" ? "" : status.tone}" style="width:${split ? pct : over ? 100 : pct}%"></div>
         ${isCurrentMonth ? `<div class="pace-mark" style="left:${(monthElapsed * 100).toFixed(1)}%" title="Today: ${Math.round(monthElapsed * 100)}% through the month"></div>` : ""}
       </div>
       ${isCurrentMonth ? `<div class="bar-caption">White marker: today's progress through the month</div>` : ""}
+      ${fc && cat.budget > 0 && spent > 0 && !over ? `<div class="forecast-note ${fc.projectedRemaining < 0 ? "bad" : "good"}">📈 On pace to finish ${fc.projectedRemaining < 0 ? `<b>${fmt(-fc.projectedRemaining)} over</b>` : `with <b>${fmt(fc.projectedRemaining)} left</b>`}</div>` : ""}
       ${cat.override ? `<div class="cat-adjust-note">✦ re-evaluated — remaining pinned (budget untouched)</div>` : ""}
       ${preAmt > 0 ? `<div class="cat-prep-note">🛒 ${fmt(preAmt)} already pre-purchased in an earlier month (paid then, allocated here)</div>` : ""}
       ${aheadOfPace && !split ? `<div class="pace-note">⚡ ${Math.round(spentFrac * 100)}% of budget used, but only ${Math.round(monthElapsed * 100)}% through the month</div>` : ""}
@@ -889,10 +1302,11 @@ function renderCategories(month) {
       persist();
     };
     list.appendChild(row);
-  }
+  });
 }
 
 let expenseFilter = "";
+let freshView = true; // replay the entrance animation after load / month change
 
 // Reminder strip: things already bought in an earlier month for this one.
 function renderPrepurchaseStrip(month) {
@@ -930,6 +1344,7 @@ function renderExpenses(month) {
   if ([...qaCat.options].some((o) => o.value === prevSel)) qaCat.value = prevSel;
 
   const cats = Object.fromEntries(month.categories.map((c) => [c.id, c]));
+  const colors = Object.fromEntries(month.categories.map((c, i) => [c.id, catColor(c, i)]));
   const q = expenseFilter.toLowerCase();
   const filtered = month.expenses.filter((e) => {
     if (!q) return true;
@@ -947,7 +1362,7 @@ function renderExpenses(month) {
     row.className = "expense-row";
     const day = new Date(exp.date + "T12:00:00");
     row.innerHTML = `
-      <div class="expense-emoji">${cat ? cat.emoji || "📦" : "❔"}</div>
+      <div class="expense-emoji"${colors[exp.catId] ? ` style="--cat:${colors[exp.catId]}"` : ""}>${cat ? cat.emoji || "📦" : "❔"}</div>
       <div class="expense-info">
         <div class="expense-note">${escapeHtml(exp.note || (cat ? cat.name : "Expense"))}</div>
         <div class="expense-meta">${cat ? escapeHtml(cat.name) + " · " : ""}${day.toLocaleDateString("en-US", { month: "short", day: "numeric" })}${exp.recurringId ? " · ↻ recurring" : ""}${exp.forMonth ? ` · <span class="prep-tag">🛒 for ${escapeHtml(monthLabelOf(exp.forMonth))}</span>` : exp.prepurchased ? ` · <span class="prep-tag">🛒 pre-purchased</span>` : ""}</div>
@@ -1022,7 +1437,7 @@ $("modalCancel").onclick = closeModal;
 $("modalBackdrop").addEventListener("mousedown", (e) => {
   if (e.target === $("modalBackdrop")) closeModal();
 });
-$("modalSave").onclick = () => { if (modalHandlers.save && modalHandlers.save() !== false) closeModal(); };
+$("modalSave").onclick = () => { if (modalHandlers.save && modalHandlers.save() !== false) { closeModal(); haptic(18); } };
 $("modalDelete").onclick = () => { if (modalHandlers.delete) { modalHandlers.delete(); closeModal(); } };
 document.addEventListener("keydown", (e) => {
   if ($("modalBackdrop").hidden) return;
@@ -1150,6 +1565,8 @@ $("balanceStripBtn").onclick = openBalanceCheck;
 $("addCategoryBtn").onclick = () => openCategoryModal(null);
 
 function openCategoryModal(cat) {
+  const list = getMonth().categories;
+  let pickedColor = cat ? catColor(cat, list.findIndex((c) => c.id === cat.id)) : CAT_PALETTE[list.length % CAT_PALETTE.length];
   openModal({
     title: cat ? "Edit category" : "New category",
     body: `
@@ -1162,6 +1579,11 @@ function openCategoryModal(cat) {
           <label>Name</label>
           <input id="f-name" type="text" value="${cat ? escapeHtml(cat.name) : ""}" placeholder="Groceries" />
         </div>
+      </div>
+      <div class="emoji-picks" id="f-emoji-picks">${EMOJI_CHOICES.map((e) => `<button type="button" data-emoji="${e}" aria-label="Use ${e}">${e}</button>`).join("")}</div>
+      <div class="field">
+        <label>Colour</label>
+        <div class="swatches" id="f-swatches">${CAT_PALETTE.map((c) => `<button type="button" class="swatch${c === pickedColor ? " active" : ""}" data-color="${c}" style="--sw:${c}" aria-label="Colour ${c}"></button>`).join("")}</div>
       </div>
       <div class="field">
         <label>Monthly budget</label>
@@ -1179,9 +1601,9 @@ function openCategoryModal(cat) {
       const month = editMonth();
       if (cat) {
         const c = month.categories.find((x) => x.id === cat.id);
-        if (c) { c.name = name; c.emoji = $("f-emoji").value.trim(); c.budget = budget; c.dailyWeeklySplit = $("f-split").checked; }
+        if (c) { c.name = name; c.emoji = $("f-emoji").value.trim(); c.budget = budget; c.color = pickedColor; c.dailyWeeklySplit = $("f-split").checked; }
       } else {
-        month.categories.push({ id: uid(), name, emoji: $("f-emoji").value.trim(), budget, dailyWeeklySplit: $("f-split").checked, override: null });
+        month.categories.push({ id: uid(), name, emoji: $("f-emoji").value.trim(), color: pickedColor, budget, dailyWeeklySplit: $("f-split").checked, override: null });
       }
       persist();
     },
@@ -1192,6 +1614,16 @@ function openCategoryModal(cat) {
       persist();
     } : null
   });
+  $("f-emoji-picks").onclick = (event) => {
+    const btn = event.target.closest("[data-emoji]");
+    if (btn) $("f-emoji").value = btn.dataset.emoji;
+  };
+  $("f-swatches").onclick = (event) => {
+    const btn = event.target.closest("[data-color]");
+    if (!btn) return;
+    pickedColor = btn.dataset.color;
+    $("f-swatches").querySelectorAll(".swatch").forEach((b) => b.classList.toggle("active", b === btn));
+  };
 }
 
 /* ---------- re-evaluate remaining ---------- */
@@ -1829,6 +2261,7 @@ $("insightsBtn").onclick = () => {
   document.querySelector(".hero").hidden = insightsOpen;
   document.querySelector(".columns").hidden = insightsOpen;
   $("balanceStrip").hidden = insightsOpen;
+  $("monthStrip").hidden = insightsOpen || !$("monthStrip").innerHTML;
   $("insightsView").hidden = !insightsOpen;
   if (insightsOpen) renderInsights();
 };
@@ -1846,6 +2279,7 @@ $("periodSeg").querySelectorAll("button").forEach((btn) => {
 // survives month-to-month copies; the average divides by the number of
 // months in the window that actually have expenses recorded.
 function renderInsights() {
+  renderInsightsOverview();
   const now = new Date();
   const keys = [];
   for (let i = 0; i < insightsMonths; i++) {
@@ -1914,7 +2348,9 @@ function shiftMonth(delta) {
   viewMonth += delta;
   if (viewMonth < 0) { viewMonth = 11; viewYear--; }
   if (viewMonth > 11) { viewMonth = 0; viewYear++; }
+  freshView = true;
   render();
+  if (insightsOpen) renderInsights();
 }
 $("prevMonth").onclick = () => shiftMonth(-1);
 $("nextMonth").onclick = () => shiftMonth(1);
@@ -1922,8 +2358,14 @@ $("todayBtn").onclick = () => {
   const now = new Date();
   viewYear = now.getFullYear();
   viewMonth = now.getMonth();
+  freshView = true;
   render();
+  if (insightsOpen) renderInsights();
 };
+
+document.addEventListener("click", (event) => {
+  if (event.target.closest("button, .stat-card, .tab")) haptic(8);
+});
 
 /* ---------- boot ---------- */
 

@@ -182,6 +182,81 @@ input, select, textarea { font-size: 16px; } /* prevents iOS auto-zoom on focus 
 .expense-info { min-width: 0; }
 .expense-note { overflow-wrap: anywhere; }
 
+/* ---- forecast strip, charts, wrap-up on phones ---- */
+.month-strip { padding: 16px; }
+.ms-big { font-size: clamp(28px, 8vw, 34px); }
+.ov-head { padding: 16px 16px 10px; }
+.ov-grid { padding: 0 12px 14px; grid-template-columns: 1fr; }
+.ov-card { background: #182536; border-color: #33465e; }
+.donut { width: 130px; height: 130px; }
+.alert-list li, .wrap-stats div { background: #1e2c3e; }
+.wrap-hero { background: #1e2c3e; }
+.swatch { width: 36px; height: 36px; }
+.emoji-picks button { width: 40px; height: 40px; }
+#insightsBtn, #quickLogBtn { display: none; }
+
+/* ---- floating bottom tab bar ---- */
+.app { padding-bottom: calc(env(safe-area-inset-bottom) + 96px); }
+.tabbar {
+  position: fixed; left: 50%; transform: translateX(-50%); z-index: 40;
+  bottom: calc(env(safe-area-inset-bottom) + 12px);
+  width: min(430px, calc(100vw - 24px));
+  display: grid; grid-template-columns: 1fr 1fr 64px 1fr; align-items: center; gap: 2px;
+  padding: 8px 10px; border-radius: 28px;
+  background: rgba(20, 30, 45, 0.88);
+  backdrop-filter: blur(22px) saturate(1.6); -webkit-backdrop-filter: blur(22px) saturate(1.6);
+  border: 1px solid var(--glass-border);
+  box-shadow: 0 14px 36px rgba(0, 0, 0, 0.4);
+}
+.tab {
+  display: flex; flex-direction: column; align-items: center; gap: 2px;
+  padding: 6px 4px; min-height: 48px; border: 0; border-radius: 18px;
+  background: none; color: var(--text-faint); font: inherit; font-size: 11px; font-weight: 600; cursor: pointer;
+  transition: color 0.18s ease, background 0.18s ease;
+}
+.tab-ico { font-size: 18px; line-height: 1; }
+.tab.active { color: var(--accent); background: rgba(125, 211, 252, 0.12); }
+.tab:focus-visible, .tab-fab:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.tab-fab {
+  width: 56px; height: 56px; margin: -22px auto 0; border-radius: 50%; border: 0;
+  font-size: 30px; line-height: 1; color: #fff; cursor: pointer;
+  background: linear-gradient(140deg, #6366f1, #0ea5e9);
+  box-shadow: 0 8px 22px rgba(56, 120, 255, 0.5);
+  transition: transform 0.15s ease;
+}
+.tab-fab:active { transform: scale(0.92); }
+
+/* ---- light theme (follows the system setting) ---- */
+@media (prefers-color-scheme: light) {
+  :root {
+    --text: #0f172a; --text-dim: #475569; --text-faint: #5b6b82;
+    --glass-bg: #ffffff; --glass-bg-strong: #e8eef8; --glass-border: #cbd5e4;
+    --green: #047857; --amber: #b45309; --red: #be123c;
+  }
+  .bg { background: #eef2fb; }
+  .glass, .glass-heavy { background: #ffffff; box-shadow: 0 6px 20px rgba(30, 41, 90, 0.08); }
+  .stat-card.accent { background: #e6f5ee; border-color: #a7d9bf; }
+  .cat-row, .cat-row:hover { background: #f6f8fd; border-color: #d3dcea; }
+  .budget-status { background: #e5ebf5; }
+  .budget-status.under { background: #d5f2e4; } .budget-status.warn { background: #fdecc8; } .budget-status.over { background: #fddde4; }
+  .bar { background: #dbe3f0; }
+  .bar-fill { background: #3b82c4; }
+  .pace-mark { background: #0f172a; }
+  .coverage-card { background: #e4effb; border-color: #b6d0ea; }
+  .daily-card { background: #eef2f8; border-color: #d3dcea; }
+  .coverage-value { color: #0f172a; }
+  .split-cash-note, .cat-actions { border-color: #d3dcea; }
+  .split-pace { background: #eaf0f8; } .split-pace.under { background: #dcf3e8; } .split-pace.over { background: #fbe3e8; }
+  .mini-btn { background: #e8eef8; border-color: #c3cfe2; color: var(--text); }
+  .pill-btn.primary { background: #2563eb; }
+  .quick-add input, .quick-add select, .search-row input { background: #f3f6fb; border-color: #c3cfe2; }
+  .ov-card { background: #f6f8fd; border-color: #d3dcea; }
+  .alert-list li, .wrap-stats div, .wrap-hero { background: #eef2f8; }
+  .ms-chip { background: #fdecc8; }
+  .tabbar { background: rgba(255, 255, 255, 0.9); box-shadow: 0 14px 36px rgba(30, 41, 90, 0.2); }
+  .tab.active { color: #0369a1; background: rgba(3, 105, 161, 0.1); }
+}
+
 @media (max-width: 600px) {
   .stat-card.accent { grid-column: 1 / -1; }
 }

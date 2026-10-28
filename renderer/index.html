@@ -71,6 +71,8 @@
     </div>
   </section>
 
+  <section class="month-strip glass" id="monthStrip" aria-live="polite" hidden></section>
+
   <div class="balance-strip glass" id="balanceStrip" hidden>
     <span id="balanceSummary"></span>
     <button class="mini-btn" id="balanceStripBtn">Check balance</button>
@@ -122,6 +124,7 @@
 
   <!-- ===== Insights ===== -->
   <section class="panel glass insights" id="insightsView" hidden>
+    <div id="insightsOverview"></div>
     <div class="panel-head">
       <h2>Average spend per category</h2>
       <div class="seg-control" id="periodSeg">

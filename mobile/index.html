@@ -7,8 +7,8 @@
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
 <title>Budget Majik</title>
 <link rel="icon" type="image/svg+xml" sizes="any" href="favicon.svg?v=20261016" />
-<link rel="stylesheet" href="../renderer/styles.css?v=20261016-category-expenses" />
-<link rel="stylesheet" href="mobile.css?v=20261009-quick-balance" />
+<link rel="stylesheet" href="../renderer/styles.css?v=20261028-forecast-insights" />
+<link rel="stylesheet" href="mobile.css?v=20261028-forecast-insights" />
 </head>
 <body>
 <div class="bg">
@@ -75,6 +75,8 @@
     </div>
   </section>
 
+  <section class="month-strip glass" id="monthStrip" aria-live="polite" hidden></section>
+
   <div class="balance-strip glass" id="balanceStrip" hidden>
     <span id="balanceSummary"></span>
     <button class="mini-btn" id="balanceStripBtn">Check balance</button>
@@ -126,6 +128,7 @@
 
   <!-- ===== Insights ===== -->
   <section class="panel glass insights" id="insightsView" hidden>
+    <div id="insightsOverview"></div>
     <div class="panel-head">
       <h2>Average spend per category</h2>
       <div class="seg-control" id="periodSeg">
@@ -166,7 +169,15 @@
   </div>
 </div>
 
+<nav class="tabbar" id="tabbar" aria-label="Sections">
+  <button class="tab active" data-tab="budget" type="button"><span class="tab-ico">◈</span><span>Budget</span></button>
+  <button class="tab" data-tab="expenses" type="button"><span class="tab-ico">☰</span><span>Expenses</span></button>
+  <button class="tab-fab" data-tab="add" type="button" aria-label="Log expense">+</button>
+  <button class="tab" data-tab="insights" type="button"><span class="tab-ico">◔</span><span>Insights</span></button>
+</nav>
+
 <script src="shim.js?v=20261009-sync-queue"></script>
-<script src="../renderer/app.js?v=20261016-category-expenses"></script>
+<script src="../renderer/app.js?v=20261028-forecast-insights"></script>
+<script src="tabs.js?v=20261028"></script>
 </body>
 </html>
