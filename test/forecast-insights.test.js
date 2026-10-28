@@ -99,3 +99,20 @@ test("insight charts render for a month with and without data", () => {
   assert.match(context.donutHtml("2026-11"), /No spending/);
   assert.match(context.trendChartHtml("2026-11"), /<svg/);
 });
+
+test("the everyday bucket is not treated as a one-off and feeds wrap-up, donut and alerts", () => {
+  const food = cat("food", "Spend", 3000, { everyday: true });
+  const rent = cat("rent", "Rent", 8000);
+  const month = {
+    income: 20000, categories: [food, rent],
+    expenses: [exp("food", "2026-10-02", 1600), exp("rent", "2026-10-01", 8000)], adjustments: []
+  };
+  const { context } = load({ months: { "2026-10": month } });
+  const lumpy = context.forecastCategory([1600], 3000, 1400, 2026, 9, new Date(2026, 9, 2));
+  const flat = context.forecastCategory([1600], 3000, 1400, 2026, 9, new Date(2026, 9, 2), { lumpy: false });
+  assert.equal(lumpy.future < flat.future, true);
+  const w = context.monthWrapUp("2026-10");
+  assert.equal(w.everyday.spent, 1600);
+  assert.equal(w.plannedSpent, 8000);
+  assert.match(context.donutHtml("2026-10"), /everyday/);
+});

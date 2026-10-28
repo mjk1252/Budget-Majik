@@ -47,7 +47,7 @@ function getMonthFor(key) {
   return {
     income: prev.income,
     categories: prev.categories.map((c) => ({
-      id: c.id, name: c.name, emoji: c.emoji, color: c.color, budget: c.budget,
+      id: c.id, name: c.name, emoji: c.emoji, color: c.color, everyday: !!c.everyday, budget: c.budget,
       dailyWeeklySplit: !!c.dailyWeeklySplit, override: null
     })),
     expenses: [],
@@ -856,11 +856,11 @@ function categoryAmounts(month, catId, key) {
 // a bulk shop: at least half the budget) are treated as one-offs and left out
 // of the daily rate. Early in the month the rate leans on the planned daily
 // budget; by month end it is entirely your actual pace.
-function forecastCategory(amounts, budget, remaining, year, month, now = new Date()) {
+function forecastCategory(amounts, budget, remaining, year, month, now = new Date(), { lumpy = true } = {}) {
   if (now.getFullYear() !== year || now.getMonth() !== month) return null;
   const days = new Date(year, month + 1, 0).getDate();
   const elapsed = now.getDate();
-  const lumps = budget > 0 ? sum(amounts.filter((a) => a >= budget * FORECAST_LUMP_SHARE)) : 0;
+  const lumps = lumpy && budget > 0 ? sum(amounts.filter((a) => a >= budget * FORECAST_LUMP_SHARE)) : 0;
   const everyday = sum(amounts) - lumps;
   const weight = elapsed / days;
   const planned = Math.max(0, budget - lumps) / days;
@@ -883,7 +883,7 @@ function forecastAll(month, key, now = new Date()) {
   let future = 0;
   for (const cat of month.categories) {
     const remaining = remainingForKey(month, cat, key);
-    const f = forecastCategory(categoryAmounts(month, cat.id, key), cat.budget, remaining, year, mIdx, now);
+    const f = forecastCategory(categoryAmounts(month, cat.id, key), cat.budget, remaining, year, mIdx, now, { lumpy: !cat.everyday });
     rows[cat.id] = f;
     future += f.future;
     if (remaining >= 0 && f.projectedRemaining < 0) atRisk.push(cat);
@@ -913,8 +913,11 @@ function monthWrapUp(key) {
   const counted = t.month.expenses.filter((e) => !e.forMonth && e.date.slice(0, 7) === key);
   const daily = dailyTotals(key);
   const busiest = Math.max(...daily);
+  const everydayCat = cats.find((c) => c.cat.everyday) || null;
   return {
     key, ...t,
+    everyday: everydayCat,
+    plannedSpent: t.spent - (everydayCat ? everydayCat.spent : 0),
     saved: t.income - t.spent,
     savingsRate: t.income > 0 ? (t.income - t.spent) / t.income : null,
     withinBudget: t.budget > 0 && t.spent <= t.budget,
@@ -940,10 +943,12 @@ function openWrapUp(key) {
   const good = [];
   if (w.withinBudget) good.push(`Finished within your ${fmt(w.budget)} budget.`);
   if (w.savingsRate !== null && w.saved > 0) good.push(`Kept ${fmt(w.saved)} of income (${Math.round(w.savingsRate * 100)}%).`);
-  for (const c of w.wins.slice(0, 2)) good.push(`${name(c)} came in ${fmt(c.left)} under.`);
+  if (w.everyday && w.everyday.budget > 0 && w.everyday.spent <= w.everyday.budget) good.push(`Everyday spending ended ${fmt(w.everyday.budget - w.everyday.spent)} under its budget.`);
+  for (const c of w.wins.filter((c) => !c.cat.everyday).slice(0, 2)) good.push(`${name(c)} came in ${fmt(c.left)} under.`);
   if (w.streak >= 2) good.push(`🔥 ${w.streak} months in a row within budget.`);
   const watch = [];
-  for (const c of w.overs.slice(0, 3)) watch.push(`${name(c)} went ${fmt(c.by)} over its ${fmt(c.budget)} budget.`);
+  if (w.everyday && w.everyday.budget > 0 && w.everyday.spent > w.everyday.budget) watch.push(`Everyday spending ran ${fmt(w.everyday.spent - w.everyday.budget)} over its budget.`);
+  for (const c of w.overs.filter((c) => !c.cat.everyday).slice(0, 3)) watch.push(`${name(c)} went ${fmt(c.by)} over its ${fmt(c.budget)} budget.`);
   if (w.savingsRate !== null && w.saved < 0) watch.push(`Spent ${fmt(-w.saved)} more than the month's income.`);
   const total = Math.max(1, sum(w.mix.map((c) => c.spent)));
   openModal({
@@ -956,6 +961,7 @@ function openWrapUp(key) {
         <div><span>Saved</span><b class="${w.saved < 0 ? "neg" : "pos"}">${fmt(w.saved)}</b></div>
         <div><span>Savings rate</span><b>${w.savingsRate === null ? "–" : `${Math.round(w.savingsRate * 100)}%`}</b></div>
       </div>
+      ${w.everyday && w.spent > 0 ? `<div class="wrap-split"><span>Everyday <b>${fmt(w.everyday.spent)}</b></span><span>Planned <b>${fmt(w.plannedSpent)}</b></span></div>` : ""}
       ${w.mix.length ? `<div class="wrap-mix" role="img" aria-label="Spending by category">${w.mix.map((c) =>
         `<i style="flex:${c.spent / total};background:${c.color}" title="${escapeHtml(c.cat.name)} ${fmt(c.spent)}"></i>`).join("")}</div>
         <div class="wrap-legend">${w.mix.slice(0, 5).map((c) =>
@@ -1020,12 +1026,14 @@ function donutHtml(key) {
     offset -= pct;
     return arc;
   }).join("");
+  const everyday = w.everyday && w.everyday.spent > 0 ? w.everyday : null;
+  const splitLine = everyday ? `<div class="split-line"><span><b>${fmt(everyday.spent)}</b> everyday · ${Math.round((everyday.spent / total) * 100)}%</span><span><b>${fmt(w.plannedSpent)}</b> planned · ${Math.round((w.plannedSpent / total) * 100)}%</span></div>` : "";
   return `<div class="donut-wrap">
     <svg class="donut" viewBox="0 0 36 36" role="img" aria-label="Spending by category">${arcs}
       <text x="18" y="17.4" text-anchor="middle" class="donut-total">${fmtShort(total)}</text>
       <text x="18" y="22" text-anchor="middle" class="donut-sub">spent</text></svg>
     <ul class="donut-legend">${slices.map((s) => `<li><i style="background:${s.color}"></i><span>${escapeHtml(s.name)}</span><b>${Math.round((s.spent / total) * 100)}%</b></li>`).join("")}</ul>
-  </div>`;
+  </div>${splitLine}`;
 }
 
 function heatmapHtml(key) {
@@ -1067,7 +1075,7 @@ function unusualSpend(key, now = new Date()) {
   const out = [];
   month.categories.forEach((cat, i) => {
     const base = avg.get(cat.name.toLowerCase());
-    if (!base || base < 50) return;
+    if (!base || base < 50 || cat.everyday) return;
     const now_ = spentFor(month, cat.id, key) + (fc ? fc.rows[cat.id].future : 0);
     const pct = (now_ - base) / base;
     if (Math.abs(pct) >= 0.4 && Math.abs(now_ - base) >= 50) out.push({ cat, color: catColor(cat, i), pct, value: now_, base });
@@ -1117,6 +1125,13 @@ function renderMonthStrip(month, totalSpent, cashLeft, forecast) {
     const diff = budget - projected;
     const scale = Math.max(projected, budget, 1);
     const streak = underBudgetStreak(prevMonthOfKey(key));
+    const everydayCat = month.categories.find((c) => c.everyday);
+    let everydayLine = "";
+    if (everydayCat) {
+      const left = remainingForKey(month, everydayCat, key);
+      const daysLeft = daysInMonthOfKey(key) - now.getDate() + 1;
+      everydayLine = `<div class="ms-everyday ${left < 0 ? "bad" : ""}">${everydayCat.emoji || "📦"} <b>${escapeHtml(everydayCat.name)}</b> · ${left < 0 ? `${fmt(-left)} over` : `${fmt(left)} left`}${left > 0 ? ` · about <b>${fmt(left / daysLeft)}</b> a day for ${daysLeft} day${daysLeft === 1 ? "" : "s"}` : ""}</div>`;
+    }
     const risk = forecast.atRisk.length
       ? `<div class="ms-risk">⚠ ${forecast.atRisk.slice(0, 3).map((c) => `${c.emoji || "📦"} ${escapeHtml(c.name)}`).join(", ")} ${forecast.atRisk.length > 3 ? `+${forecast.atRisk.length - 3} more ` : ""}likely to run out before month end</div>` : "";
     html = `<div class="ms-main">
@@ -1128,6 +1143,7 @@ function renderMonthStrip(month, totalSpent, cashLeft, forecast) {
           <i class="ms-ghost" style="left:${Math.min(100, (totalSpent / scale) * 100).toFixed(1)}%;width:${Math.max(0, Math.min(100, (projected / scale) * 100) - Math.min(100, (totalSpent / scale) * 100)).toFixed(1)}%"></i>
           <i class="ms-budget" style="left:${((budget / scale) * 100).toFixed(1)}%"></i>
         </div>
+        ${everydayLine}
         ${risk}
       </div>
       <div class="ms-side">${streak >= 1 ? `<span class="ms-chip" title="Months in a row finished within budget">🔥 ${streak}-month streak</span>` : ""}
@@ -1270,6 +1286,7 @@ function renderCategories(month, forecast = null) {
       <div class="cat-top">
         <span class="cat-emoji">${cat.emoji || "📦"}</span>
         <button type="button" class="cat-name" data-act="expenses" aria-label="View ${escapeHtml(cat.name)} expenses for ${escapeHtml(monthLabelOf(currentKey()))}" aria-haspopup="dialog">${escapeHtml(cat.name)}</button>
+        ${cat.everyday ? '<span class="everyday-chip" title="Your everyday spending bucket">Everyday</span>' : ""}
         <span class="budget-status ${status.tone}">${status.label}</span>
       </div>
       <div class="cat-balance ${over ? "over" : ""}"><b>${fmt(Math.abs(remaining))}</b><span>${over ? "over budget" : "left to spend"}</span></div>
@@ -1591,6 +1608,10 @@ function openCategoryModal(cat) {
         <div class="hint">This is the planned amount. It carries over as the default for future months and is never changed by re-evaluations.</div>
       </div>
       <div class="field">
+        <label class="split-toggle"><input id="f-everyday" type="checkbox" role="switch" ${cat && cat.everyday ? "checked" : ""} /><span>Everyday spending bucket</span></label>
+        <div class="hint">Use this for the category you spend "whatever" from. The forecast shows how much of it is left per day, and Insights separates everyday from planned spending. Only one category can be the bucket.</div>
+      </div>
+      <div class="field">
         <label class="split-toggle"><input id="f-split" type="checkbox" role="switch" ${cat && cat.dailyWeeklySplit ? "checked" : ""} /><span>Daily/Weekly Split</span></label>
         <div class="hint">Show daily and weekly budgets, estimated purchase coverage, and over-budget amounts as days' worth. Savings can raise the daily rate; overspending never lowers it. This choice carries over to future months.</div>
       </div>`,
@@ -1601,9 +1622,13 @@ function openCategoryModal(cat) {
       const month = editMonth();
       if (cat) {
         const c = month.categories.find((x) => x.id === cat.id);
-        if (c) { c.name = name; c.emoji = $("f-emoji").value.trim(); c.budget = budget; c.color = pickedColor; c.dailyWeeklySplit = $("f-split").checked; }
+        if (c) { c.name = name; c.emoji = $("f-emoji").value.trim(); c.budget = budget; c.color = pickedColor; c.dailyWeeklySplit = $("f-split").checked; c.everyday = $("f-everyday").checked; }
       } else {
-        month.categories.push({ id: uid(), name, emoji: $("f-emoji").value.trim(), color: pickedColor, budget, dailyWeeklySplit: $("f-split").checked, override: null });
+        month.categories.push({ id: uid(), name, emoji: $("f-emoji").value.trim(), color: pickedColor, everyday: $("f-everyday").checked, budget, dailyWeeklySplit: $("f-split").checked, override: null });
+      }
+      if ($("f-everyday").checked) {
+        const keep = cat ? cat.id : month.categories[month.categories.length - 1].id;
+        for (const c of month.categories) c.everyday = c.id === keep;
       }
       persist();
     },
