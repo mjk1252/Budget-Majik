@@ -5,11 +5,18 @@
  * shared stylesheet desktop still uses.
  */
 
-html, body {
+html {
   height: auto;
   min-height: 100%;
-  overflow: auto;
   overflow-x: hidden;
+  overflow-y: auto;
+}
+body {
+  height: auto;
+  min-height: 100%;
+  /* body must not be its own scroll container, or the fixed tab bar scrolls with it */
+  overflow: visible;
+  overflow-x: clip;
   -webkit-user-select: text;
   user-select: text;
 }
@@ -37,10 +44,18 @@ html, body {
 .stat-value { font-size: 24px; }
 
 .columns {
-  grid-template-columns: 1fr;
+  grid-template-columns: minmax(0, 1fr);
   flex: none;
+  width: 100%;
+  min-width: 0;
 }
-.panel { overflow: visible; }
+.app > *, .columns > * { min-width: 0; max-width: 100%; }
+.panel { overflow: visible; min-width: 0; }
+.cat-row, .expense-row, .cat-list, .expense-list { min-width: 0; max-width: 100%; box-sizing: border-box; }
+.expense-row { gap: 10px; padding: 11px 12px; }
+.expense-amount { white-space: nowrap; }
+.expense-meta { overflow-wrap: anywhere; }
+.cat-top > * { min-width: 0; }
 .cat-list, .expense-list {
   overflow-y: visible;
   max-height: none;
@@ -186,7 +201,7 @@ input, select, textarea { font-size: 16px; } /* prevents iOS auto-zoom on focus 
 .month-strip { padding: 16px; }
 .ms-big { font-size: clamp(28px, 8vw, 34px); }
 .ov-head { padding: 16px 16px 10px; }
-.ov-grid { padding: 0 12px 14px; grid-template-columns: 1fr; }
+.ov-grid { padding: 0 12px 14px; grid-template-columns: minmax(0, 1fr); }
 .ov-card { background: #182536; border-color: #33465e; }
 .donut { width: 130px; height: 130px; }
 .alert-list li, .wrap-stats div { background: #1e2c3e; }
@@ -198,7 +213,7 @@ input, select, textarea { font-size: 16px; } /* prevents iOS auto-zoom on focus 
 /* ---- floating bottom tab bar ---- */
 .app { padding-bottom: calc(env(safe-area-inset-bottom) + 96px); }
 .tabbar {
-  position: fixed; left: 50%; transform: translateX(-50%); z-index: 40;
+  position: fixed; left: 0; right: 0; margin-inline: auto; z-index: 40;
   bottom: calc(env(safe-area-inset-bottom) + 12px);
   width: min(430px, calc(100vw - 24px));
   display: grid; grid-template-columns: 1fr 1fr 64px 1fr; align-items: center; gap: 2px;
