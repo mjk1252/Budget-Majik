@@ -133,7 +133,7 @@
     }).observe(catList, { childList: true, subtree: true });
   }
 
-  /* ---- modal sheet: keep Save above the on-screen keyboard + input hints ---- */
+  /* ---- modal sheet: input hints (pinToViewport below is kept but no longer used) ---- */
   const backdrop = document.getElementById("modalBackdrop");
   const saveBtn = document.getElementById("modalSave");
   const vv = window.visualViewport;
@@ -182,10 +182,8 @@
     new MutationObserver(() => {
       if (!backdrop.hidden) {
         hintInputs();
-        pinToViewport();
-        if (vv) { vv.addEventListener("resize", pinToViewport); vv.addEventListener("scroll", pinToViewport); }
+        // Sheet stays put: the keyboard simply covers the bottom instead of the sheet riding above it.
       } else {
-        if (vv) { vv.removeEventListener("resize", pinToViewport); vv.removeEventListener("scroll", pinToViewport); }
         unpin();
         if (pending) { celebrate(pending.x, pending.y, pending.amount, pending.category, 22); pending = null; }
       }
