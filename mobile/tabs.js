@@ -7,9 +7,25 @@
   const tabs = [...bar.querySelectorAll(".tab")];
   const insightsOpen = () => !insightsView.hidden;
 
+  const pill = document.getElementById("tabPill");
+  function placePill(first) {
+    const active = tabs.find((t) => t.classList.contains("active"));
+    if (!pill || !active || !active.offsetWidth) return;
+    if (first) pill.style.transition = "none";
+    pill.style.top = active.offsetTop + "px";
+    pill.style.height = active.offsetHeight + "px";
+    pill.style.width = active.offsetWidth + "px";
+    pill.style.transform = "translateX(" + active.offsetLeft + "px)";
+    pill.classList.add("ready");
+    if (first) requestAnimationFrame(() => { pill.style.transition = ""; });
+  }
   function setActive(name) {
     tabs.forEach((t) => t.classList.toggle("active", t.dataset.tab === name));
+    placePill(false);
   }
+  placePill(true);
+  window.addEventListener("resize", () => placePill(true));
+  if (document.fonts && document.fonts.ready) document.fonts.ready.then(() => placePill(true));
   function closeInsights() {
     if (insightsOpen()) document.getElementById("insightsBtn").click();
   }

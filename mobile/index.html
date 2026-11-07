@@ -6,9 +6,13 @@
 <meta name="apple-mobile-web-app-capable" content="yes" />
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
 <title>Budget Majik</title>
-<link rel="icon" type="image/svg+xml" sizes="any" href="favicon.svg?v=20261016" />
+<link rel="icon" type="image/svg+xml" sizes="any" href="favicon.svg?v=20261108-fun" />
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Nunito:wght@600;700;800&display=swap" />
 <link rel="stylesheet" href="../renderer/styles.css?v=20261028-everyday-adj" />
 <link rel="stylesheet" href="mobile.css?v=20261028-everyday-adj" />
+<link rel="stylesheet" href="fun.css?v=20261108-fast" />
 </head>
 <body>
 <div class="bg">
@@ -23,7 +27,16 @@
   <!-- ===== Header ===== -->
   <header class="topbar glass">
     <div class="brand">
-      <div class="brand-mark">◈</div>
+      <div class="brand-mark" aria-hidden="true">
+        <svg viewBox="0 0 40 40" width="30" height="30">
+          <rect x="5" y="12" width="30" height="22" rx="8" fill="#fff"/>
+          <circle cx="30" cy="23" r="3" fill="#9b7bff"/>
+          <ellipse class="eye" cx="15" cy="22" rx="2" ry="3" fill="#1d1533"/>
+          <ellipse class="eye" cx="23" cy="22" rx="2" ry="3" fill="#1d1533"/>
+          <path d="M16 28q3.5 3.5 7 0" fill="none" stroke="#1d1533" stroke-width="2" stroke-linecap="round"/>
+          <path class="spark" d="m31 4 1.8 4.2L37 10l-4.2 1.8L31 16l-1.8-4.2L25 10l4.2-1.8Z" fill="#c6f36b"/>
+        </svg>
+      </div>
       <div class="brand-name">Budget <span>Majik</span></div>
     </div>
     <div class="month-nav">
@@ -49,12 +62,12 @@
       <div class="stat-sub">this month · tap to edit</div>
     </div>
     <div class="stat-card glass">
-      <div class="stat-label">Spent so far</div>
+      <div class="stat-label">Already spent</div>
       <div class="stat-value" id="spentValue">R0</div>
       <div class="stat-sub" id="spentSub">&nbsp;</div>
     </div>
     <div class="stat-card glass" title="Click to add a one-off adjustment">
-      <div class="stat-label">Cash left</div>
+      <div class="stat-label">Still in the pot</div>
       <div class="stat-value" id="cashLeftValue">R0</div>
       <div class="stat-sub" id="cashLeftSub">income − spent</div>
     </div>
@@ -64,7 +77,7 @@
       <div class="stat-sub" id="bankTargetSub">cash left after future purchases</div>
     </div>
     <div class="stat-card glass accent" id="freeCard">
-      <div class="stat-label">Available after budgets</div>
+      <div class="stat-label">Free to play with</div>
       <div class="stat-value" id="freeValue">R0</div>
       <div class="stat-sub">after all remaining budgets</div>
     </div>
@@ -95,7 +108,15 @@
       </div>
       <div class="cat-list" id="catList"></div>
       <div class="empty-hint" id="catEmpty" hidden>
-        No budget categories yet.<br/>Add one to get started ✨
+        <svg class="mascot-jar" viewBox="0 0 120 120" aria-hidden="true">
+          <rect x="30" y="22" width="60" height="12" rx="6" fill="#9b7bff"/>
+          <path d="M34 36h52v52a16 16 0 0 1-16 16H50a16 16 0 0 1-16-16Z" fill="#fff" fill-opacity=".14" stroke="#cdbfe8" stroke-width="4" stroke-linejoin="round"/>
+          <ellipse cx="50" cy="66" rx="3.4" ry="5" fill="currentColor"/>
+          <ellipse cx="70" cy="66" rx="3.4" ry="5" fill="currentColor"/>
+          <path d="M52 80q8 7 16 0" fill="none" stroke="currentColor" stroke-width="3.4" stroke-linecap="round"/>
+          <path d="m92 28 2.4 5.6 5.6 2.4-5.6 2.4L92 44l-2.4-5.6-5.6-2.4 5.6-2.4Z" fill="#c6f36b"/>
+        </svg>
+        Give your Rands a home.<br/>Add a category ✨
       </div>
     </section>
 
@@ -119,8 +140,8 @@
         <input id="expenseSearch" type="text" placeholder="🔍 Search this month's expenses…" />
       </div>
       <div class="expense-list" id="expenseList"></div>
-      <div class="empty-hint" id="expEmpty" hidden>
-        Nothing spent yet this month 🎉
+      <div class="empty-hint confetti" id="expEmpty" hidden>
+        Clean slate! Nothing spent yet <span class="bounce">🎉</span>
       </div>
     </section>
 
@@ -170,14 +191,16 @@
 </div>
 
 <nav class="tabbar" id="tabbar" aria-label="Sections">
-  <button class="tab active" data-tab="budget" type="button"><span class="tab-ico">◈</span><span>Budget</span></button>
-  <button class="tab" data-tab="expenses" type="button"><span class="tab-ico">☰</span><span>Expenses</span></button>
+  <span class="tab-pill" id="tabPill" aria-hidden="true"></span>
+  <button class="tab active" data-tab="budget" type="button"><span class="tab-ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="7" width="18" height="13" rx="3.5"/><path d="M17 7V6a2 2 0 0 0-2-2H6.5A2.5 2.5 0 0 0 4 6.5"/><circle cx="16.5" cy="13.5" r="1.2" fill="currentColor"/></svg></span><span>Budget</span></button>
+  <button class="tab" data-tab="expenses" type="button"><span class="tab-ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 3h12v18l-2.4-1.6L13.2 21 12 19.8 10.8 21l-2.4-1.6L6 21Z"/><path d="M9.5 8.5h5M9.5 12.5h5"/></svg></span><span>Expenses</span></button>
   <button class="tab-fab" data-tab="add" type="button" aria-label="Log expense">+</button>
-  <button class="tab" data-tab="insights" type="button"><span class="tab-ico">◔</span><span>Insights</span></button>
+  <button class="tab" data-tab="insights" type="button"><span class="tab-ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 19V11M10 19V6M16 19v-6"/><path d="m19 3 .9 2.1L22 6l-2.1.9L19 9l-.9-2.1L16 6l2.1-.9Z" fill="currentColor"/></svg></span><span>Insights</span></button>
 </nav>
 
 <script src="shim.js?v=20261009-sync-queue"></script>
 <script src="../renderer/app.js?v=20261028-everyday-adj"></script>
-<script src="tabs.js?v=20261028"></script>
+<script src="tabs.js?v=20261108-fun"></script>
+<script src="fun.js?v=20261108-fast"></script>
 </body>
 </html>
