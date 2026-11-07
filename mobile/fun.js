@@ -6,13 +6,13 @@
   const money = (n) => "R" + n.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
   /* ---- confetti burst ---- */
-  function burst(x, y, count = 22) {
+  function burst(x, y, count = 22, spread = 1) {
     if (reduced()) return;
     for (let i = 0; i < count; i++) {
       const bit = document.createElement("span");
       bit.className = "confetti-bit";
       const angle = Math.random() * Math.PI * 2;
-      const dist = 50 + Math.random() * 110;
+      const dist = (50 + Math.random() * 110) * spread;
       bit.style.left = x + "px";
       bit.style.top = y + "px";
       bit.style.background = COLORS[i % COLORS.length];
@@ -49,7 +49,88 @@
   }
   function celebrate(x, y, amount, categoryText, count) {
     burst(x, y, count);
+    hopMascot();
     if (amount > 0) toast("Saved " + money(amount) + (categoryText ? " · " + categoryText : ""));
+  }
+
+  /* ---- mascot: hops on every save, and chats when tapped ---- */
+  const mascot = document.querySelector(".brand-mark");
+  const QUIPS = ["Ka-ching! 💸", "Your Rands are in good hands ✨", "Budget wizard at work 🪄", "Tiny spends, big dreams 🌈", "Looking sharp, boss 😎", "Every cent has a job 💪", "I believe in your budget 💜"];
+  let quipIx = Math.floor(Math.random() * QUIPS.length);
+  function hopMascot() {
+    if (!mascot || reduced()) return;
+    mascot.classList.remove("hopping");
+    void mascot.offsetWidth;
+    mascot.classList.add("hopping");
+  }
+  if (mascot) {
+    mascot.addEventListener("animationend", (e) => { if (e.animationName === "mascotHop") mascot.classList.remove("hopping"); });
+    mascot.addEventListener("click", () => { hopMascot(); quipIx = (quipIx + 1) % QUIPS.length; toast(QUIPS[quipIx]); });
+  }
+
+  /* ---- tap sparkles on buttons, cards and tabs ---- */
+  document.addEventListener("pointerup", (e) => {
+    if (reduced() || e.pointerType === "mouse" && e.button !== 0) return;
+    const hit = e.target.closest && e.target.closest("button, .stat-card, .cat-row, .tab, .expense-row");
+    if (!hit || hit.disabled || hit.id === "qa-add" || hit.id === "modalSave") return;
+    burst(e.clientX, e.clientY, 7, 0.45);
+  }, { passive: true });
+
+  /* ---- tapping a category / expense emoji floats a little flurry of it ---- */
+  document.addEventListener("click", (e) => {
+    const emoji = e.target.closest && e.target.closest(".cat-emoji, .expense-emoji");
+    if (!emoji || reduced()) return;
+    const glyph = emoji.textContent.trim();
+    if (!glyph) return;
+    const r = emoji.getBoundingClientRect();
+    for (let i = 0; i < 4; i++) {
+      const el = document.createElement("span");
+      el.className = "float-emoji";
+      el.textContent = glyph;
+      el.style.left = r.left + r.width / 2 + (Math.random() * 30 - 15) + "px";
+      el.style.top = r.top + r.height / 2 + "px";
+      el.style.setProperty("--dx", Math.round(Math.random() * 60 - 30) + "px");
+      el.style.animationDelay = i * 90 + "ms";
+      el.addEventListener("animationend", () => el.remove());
+      document.body.appendChild(el);
+    }
+  }, true);
+
+  /* ---- a category that tips over budget shakes its header ---- */
+  const catList = document.getElementById("catList");
+  if (catList) {
+    let prevOver = null;
+    let overTimer = 0;
+    const overNames = () => {
+      const set = new Set();
+      catList.querySelectorAll(".cat-row").forEach((row) => {
+        if (row.querySelector(".budget-status.over")) {
+          const n = row.querySelector(".cat-name");
+          if (n) set.add(n.textContent.trim());
+        }
+      });
+      return set;
+    };
+    if (catList.querySelector(".cat-row")) prevOver = overNames(); // already rendered: that's the baseline
+    new MutationObserver(() => {
+      clearTimeout(overTimer);
+      overTimer = setTimeout(() => {
+        const now = overNames();
+        if (prevOver && !reduced()) {
+          catList.querySelectorAll(".cat-row").forEach((row) => {
+            const n = row.querySelector(".cat-name");
+            const top = row.querySelector(".cat-top");
+            if (n && top && now.has(n.textContent.trim()) && !prevOver.has(n.textContent.trim())) {
+              top.classList.add("shake");
+              top.addEventListener("animationend", () => top.classList.remove("shake"), { once: true });
+              const [x, y] = centerOf(top);
+              burst(x, y, 10, 0.6);
+            }
+          });
+        }
+        prevOver = now;
+      }, 300);
+    }).observe(catList, { childList: true, subtree: true });
   }
 
   /* ---- modal sheet: keep Save above the on-screen keyboard + input hints ---- */
