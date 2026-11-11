@@ -4,7 +4,7 @@ Do this once. Afterwards, each device just needs the URL pasted into the website
 
 ## 1. Create the sheet
 
-1. Go to [sheets.new](https://sheets.new) (signed in to your Google account).
+1. Go to [sheets.new](https://sheets.new) (signed in as mjk.visser@gmail.com).
 2. Name it something like **Budget Majik**.
 
 ## 2. Add the script
