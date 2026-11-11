@@ -2,14 +2,17 @@
  * it never changes budget data and only watches the DOM app.js produces. */
 (function () {
   const reduced = () => window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
-  const xmas = document.documentElement.classList.contains("xmas");
   const SEASON_COLORS = { summer: ["#ffc247", "#ff8a3d", "#7dd3fc", "#ffffff", "#5ef0b6"], autumn: ["#ffa65c", "#e0782d", "#b8392b", "#ffd98a", "#8a5a2b"], winter: ["#9bd9ff", "#6aa6ff", "#ffffff", "#c6e6ff", "#ffd68a"], spring: ["#dcb6ff", "#b07cff", "#ff9ad5", "#ffffff", "#8ae0b0"] };
-  const COLORS = SEASON_COLORS[["summer", "autumn", "winter", "spring"].find((s) => document.documentElement.classList.contains("season-" + s))] || (xmas ? ["#ff5a5f", "#6fe3a0", "#ffd76a", "#ffffff", "#2f9e5e", "#d6303a"] : ["#c6f36b", "#5ef0b6", "#ffcf4a", "#ff7ab8", "#9b7bff", "#7dd3fc"]);
+  const DEFAULT_COLORS = ["#c6f36b", "#5ef0b6", "#ffcf4a", "#ff7ab8", "#9b7bff", "#7dd3fc"];
+  const XMAS_COLORS = ["#ff5a5f", "#6fe3a0", "#ffd76a", "#ffffff", "#2f9e5e", "#d6303a"];
+  const seasonNow = () => ["summer", "autumn", "winter", "spring"].find((s) => document.documentElement.classList.contains("season-" + s));
+  const colors = () => SEASON_COLORS[seasonNow()] || (document.documentElement.classList.contains("xmas") ? XMAS_COLORS : DEFAULT_COLORS);
   const money = (n) => "R" + n.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
   /* ---- confetti burst ---- */
   function burst(x, y, count = 22, spread = 1) {
     if (reduced()) return;
+    const palette = colors();
     for (let i = 0; i < count; i++) {
       const bit = document.createElement("span");
       bit.className = "confetti-bit";
@@ -17,7 +20,7 @@
       const dist = (50 + Math.random() * 110) * spread;
       bit.style.left = x + "px";
       bit.style.top = y + "px";
-      bit.style.background = COLORS[i % COLORS.length];
+      bit.style.background = palette[i % palette.length];
       bit.style.borderRadius = Math.random() > 0.5 ? "50%" : "2px";
       bit.style.setProperty("--dx", Math.cos(angle) * dist + "px");
       bit.style.setProperty("--dy", Math.sin(angle) * dist - 60 + "px");
@@ -63,9 +66,10 @@
     winter: ["Bundle up, budget on 🧣", "Soup season savings 🍲", "Frosty mornings, healthy balance ❄️", "Keeping the geyser costs low 🔥"],
     spring: ["Jacaranda season! 💜", "Fresh start, fresh budget 🌸", "Blooming balances 🌷", "Purple rain of savings 💜"],
   };
-  const seasonKey = ["summer", "autumn", "winter", "spring"].find((s) => document.documentElement.classList.contains("season-" + s));
-  const QUIPS = seasonKey ? SEASON_QUIPS[seasonKey] : xmas ? ["Ho ho ho! 🎅", "Merry Budgetmas! 🎄", "Checking your list twice ✨", "Jingle Rands, jingle Rands 🔔", "Gifts: budgeted. Cookies: also budgeted 🍪", "Santa approves this spend 🎁", "Snow much to save! ❄️"] : ["Ka-ching! 💸", "Your Rands are in good hands ✨", "Budget wizard at work 🪄", "Tiny spends, big dreams 🌈", "Looking sharp, boss 😎", "Every cent has a job 💪", "I believe in your budget 💜"];
-  let quipIx = Math.floor(Math.random() * QUIPS.length);
+  const XMAS_QUIPS = ["Ho ho ho! 🎅", "Merry Budgetmas! 🎄", "Checking your list twice ✨", "Jingle Rands, jingle Rands 🔔", "Gifts: budgeted. Cookies: also budgeted 🍪", "Santa approves this spend 🎁", "Snow much to save! ❄️"];
+  const DEFAULT_QUIPS = ["Ka-ching! 💸", "Your Rands are in good hands ✨", "Budget wizard at work 🪄", "Tiny spends, big dreams 🌈", "Looking sharp, boss 😎", "Every cent has a job 💪", "I believe in your budget 💜"];
+  const quips = () => SEASON_QUIPS[seasonNow()] || (document.documentElement.classList.contains("xmas") ? XMAS_QUIPS : DEFAULT_QUIPS);
+  let quipIx = Math.floor(Math.random() * 100);
   function hopMascot() {
     if (!mascot || reduced()) return;
     mascot.classList.remove("hopping");
@@ -74,7 +78,7 @@
   }
   if (mascot) {
     mascot.addEventListener("animationend", (e) => { if (e.animationName === "mascotHop") mascot.classList.remove("hopping"); });
-    mascot.addEventListener("click", () => { hopMascot(); quipIx = (quipIx + 1) % QUIPS.length; toast(QUIPS[quipIx]); });
+    mascot.addEventListener("click", () => { hopMascot(); const q = quips(); quipIx = (quipIx + 1) % q.length; toast(q[quipIx]); });
   }
 
   /* ---- tap sparkles on buttons, cards and tabs ---- */
