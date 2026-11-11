@@ -1,0 +1,98 @@
+/* ============ Seasonal themes (South African calendar) ============ *
+ * Christmas lives in xmas.css. These are the other four seasons; each one only
+ * swaps colour tokens, the backdrop tint and the mascot gradient.
+ */
+html.season-summer { /* Jan-Feb: sunny Highveld / beach */
+  --text-dim: #cfe6ee; --text-faint: #9fc2cf;
+  --glass-bg: #11323f; --glass-bg-strong: #1a4455; --glass-border: #2c6a80;
+  --accent: #ffc247; --violet: #ff8a3d; --on-accent: #3a1d05; --amber: #ffc247;
+  --surface-2: #163b4a; --surface-3: #1b4658; --track: #285b6e;
+  --sticker: 4px 4px 0 #06161d; --sticker-sm: 3px 3px 0 #06161d;
+}
+html.season-summer .bg {
+  background-color: #0b2430;
+  background-image:
+    radial-gradient(rgba(255, 194, 71, 0.14) 1.6px, transparent 1.8px),
+    radial-gradient(rgba(125, 211, 252, 0.12) 1.6px, transparent 1.8px),
+    radial-gradient(900px 600px at 90% -10%, #6b3d12 0%, transparent 60%);
+}
+html.season-summer .brand-mark { background: linear-gradient(140deg, #ffc247, #ff7a3d); box-shadow: 3px 3px 0 #06161d; }
+html.season-summer .tab-fab { background: linear-gradient(140deg, #ffc247, #ff8a3d); border-color: #06161d; }
+
+html.season-autumn { /* Mar-May: Highveld autumn leaves */
+  --text-dim: #ecd7c4; --text-faint: #c0a48c;
+  --glass-bg: #34211a; --glass-bg-strong: #4a3024; --glass-border: #6e4a37;
+  --accent: #ffa65c; --violet: #e0782d; --on-accent: #35170a; --amber: #ffbd59;
+  --surface-2: #3d281f; --surface-3: #47301f; --track: #5a3d2e;
+  --sticker: 4px 4px 0 #170c07; --sticker-sm: 3px 3px 0 #170c07;
+}
+html.season-autumn .bg {
+  background-color: #1f130e;
+  background-image:
+    radial-gradient(rgba(255, 166, 92, 0.12) 1.6px, transparent 1.8px),
+    radial-gradient(rgba(190, 80, 40, 0.14) 1.6px, transparent 1.8px),
+    radial-gradient(900px 600px at 90% -10%, #5a2a12 0%, transparent 60%);
+}
+html.season-autumn .brand-mark { background: linear-gradient(140deg, #e0782d, #b8392b); box-shadow: 3px 3px 0 #170c07; }
+html.season-autumn .tab-fab { background: linear-gradient(140deg, #ffa65c, #e0782d); border-color: #170c07; }
+
+html.season-winter { /* Jun-Aug: crisp, frosty mornings */
+  --text-dim: #d3e2f5; --text-faint: #9fb6d2;
+  --glass-bg: #15233b; --glass-bg-strong: #1f3252; --glass-border: #35517d;
+  --accent: #9bd9ff; --violet: #6aa6ff; --on-accent: #0b1b33; --amber: #ffd68a;
+  --surface-2: #1a2b47; --surface-3: #203452; --track: #2c4468;
+  --sticker: 4px 4px 0 #060d1a; --sticker-sm: 3px 3px 0 #060d1a;
+}
+html.season-winter .bg {
+  background-color: #0c1626;
+  background-image:
+    radial-gradient(rgba(155, 217, 255, 0.13) 1.6px, transparent 1.8px),
+    radial-gradient(rgba(255, 255, 255, 0.09) 1.6px, transparent 1.8px),
+    radial-gradient(900px 600px at 90% -10%, #1a3a66 0%, transparent 60%);
+}
+html.season-winter .brand-mark { background: linear-gradient(140deg, #6aa6ff, #9bd9ff); box-shadow: 3px 3px 0 #060d1a; }
+html.season-winter .tab-fab { background: linear-gradient(140deg, #9bd9ff, #6aa6ff); border-color: #060d1a; }
+
+html.season-spring { /* Sep-Nov: jacaranda season */
+  --text-dim: #e6d6f7; --text-faint: #b9a2d6;
+  --glass-bg: #2a1d45; --glass-bg-strong: #3b2a60; --glass-border: #5d4496;
+  --accent: #dcb6ff; --violet: #b07cff; --on-accent: #2a1048; --amber: #ffd98a;
+  --surface-2: #31234f; --surface-3: #3a2a5d; --track: #46347a;
+  --sticker: 4px 4px 0 #120a22; --sticker-sm: 3px 3px 0 #120a22;
+}
+html.season-spring .bg {
+  background-color: #1b1230;
+  background-image:
+    radial-gradient(rgba(220, 182, 255, 0.14) 1.6px, transparent 1.8px),
+    radial-gradient(rgba(255, 154, 213, 0.12) 1.6px, transparent 1.8px),
+    radial-gradient(900px 600px at 90% -10%, #4a2a80 0%, transparent 60%);
+}
+html.season-spring .brand-mark { background: linear-gradient(140deg, #b07cff, #ff9ad5); box-shadow: 3px 3px 0 #120a22; }
+html.season-spring .tab-fab { background: linear-gradient(140deg, #dcb6ff, #ff9ad5); border-color: #120a22; }
+
+/* falling leaves / petals / flakes (layer created by season.js; styled here
+   so it also works outside December, where xmas.css's copy is the same) */
+html.seasonal:not(.xmas) .snow { position: fixed; inset: 0; z-index: 5; pointer-events: none; overflow: hidden; }
+html.seasonal:not(.xmas) .snowflake { position: absolute; top: -20px; color: #fff; line-height: 1; opacity: 0; animation: snowFall linear infinite; }
+html.season-winter .snowflake { color: #bfe6ff; }
+@keyframes snowFall {
+  0% { transform: translate3d(0, -20px, 0) rotate(0); opacity: 0; }
+  10% { opacity: var(--o, 0.8); }
+  100% { transform: translate3d(var(--drift, 30px), 105vh, 0) rotate(360deg); opacity: var(--o, 0.8); }
+}
+@media (prefers-reduced-motion: reduce) { .snow { display: none; } }
+
+@media (prefers-color-scheme: light) {
+  html.season-summer, html.season-autumn, html.season-winter, html.season-spring {
+    --text: #1c2430; --text-dim: #3d4a5c; --text-faint: #5b6b82;
+    --glass-bg: #ffffff; --glass-bg-strong: #eef2f8; --glass-border: #cbd5e4;
+    --surface-2: #f4f6fb; --surface-3: #eaeff7; --track: #d9e1ee; --on-accent: #fff;
+    --sticker: 4px 4px 0 #dfe6f1; --sticker-sm: 3px 3px 0 #dfe6f1;
+  }
+  html.season-summer { --accent: #b45309; }
+  html.season-autumn { --accent: #b4410f; }
+  html.season-winter { --accent: #0369a1; }
+  html.season-spring { --accent: #7e3fd1; }
+  html.seasonal:not(.xmas) .bg { background-image: none; background-color: #f4f6fb; }
+  html.season-winter .snowflake { color: #7fb4d6; }
+}

@@ -2,7 +2,9 @@
  * it never changes budget data and only watches the DOM app.js produces. */
 (function () {
   const reduced = () => window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
-  const COLORS = ["#c6f36b", "#5ef0b6", "#ffcf4a", "#ff7ab8", "#9b7bff", "#7dd3fc"];
+  const xmas = document.documentElement.classList.contains("xmas");
+  const SEASON_COLORS = { summer: ["#ffc247", "#ff8a3d", "#7dd3fc", "#ffffff", "#5ef0b6"], autumn: ["#ffa65c", "#e0782d", "#b8392b", "#ffd98a", "#8a5a2b"], winter: ["#9bd9ff", "#6aa6ff", "#ffffff", "#c6e6ff", "#ffd68a"], spring: ["#dcb6ff", "#b07cff", "#ff9ad5", "#ffffff", "#8ae0b0"] };
+  const COLORS = SEASON_COLORS[["summer", "autumn", "winter", "spring"].find((s) => document.documentElement.classList.contains("season-" + s))] || (xmas ? ["#ff5a5f", "#6fe3a0", "#ffd76a", "#ffffff", "#2f9e5e", "#d6303a"] : ["#c6f36b", "#5ef0b6", "#ffcf4a", "#ff7ab8", "#9b7bff", "#7dd3fc"]);
   const money = (n) => "R" + n.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
   /* ---- confetti burst ---- */
@@ -55,7 +57,14 @@
 
   /* ---- mascot: hops on every save, and chats when tapped ---- */
   const mascot = document.querySelector(".brand-mark");
-  const QUIPS = ["Ka-ching! 💸", "Your Rands are in good hands ✨", "Budget wizard at work 🪄", "Tiny spends, big dreams 🌈", "Looking sharp, boss 😎", "Every cent has a job 💪", "I believe in your budget 💜"];
+  const SEASON_QUIPS = {
+    summer: ["Braai money sorted 🔥", "Sun\u2019s out, budget\u2019s in ☀️", "Ice-cold and under budget 🧊", "Beach days are affordable days 🏖️"],
+    autumn: ["Leaf it to me 🍂", "Budget season is cozy season 🍁", "Rusks and a plan ☕", "Your Rands are turning golden 🍂"],
+    winter: ["Bundle up, budget on 🧣", "Soup season savings 🍲", "Frosty mornings, healthy balance ❄️", "Keeping the geyser costs low 🔥"],
+    spring: ["Jacaranda season! 💜", "Fresh start, fresh budget 🌸", "Blooming balances 🌷", "Purple rain of savings 💜"],
+  };
+  const seasonKey = ["summer", "autumn", "winter", "spring"].find((s) => document.documentElement.classList.contains("season-" + s));
+  const QUIPS = seasonKey ? SEASON_QUIPS[seasonKey] : xmas ? ["Ho ho ho! 🎅", "Merry Budgetmas! 🎄", "Checking your list twice ✨", "Jingle Rands, jingle Rands 🔔", "Gifts: budgeted. Cookies: also budgeted 🍪", "Santa approves this spend 🎁", "Snow much to save! ❄️"] : ["Ka-ching! 💸", "Your Rands are in good hands ✨", "Budget wizard at work 🪄", "Tiny spends, big dreams 🌈", "Looking sharp, boss 😎", "Every cent has a job 💪", "I believe in your budget 💜"];
   let quipIx = Math.floor(Math.random() * QUIPS.length);
   function hopMascot() {
     if (!mascot || reduced()) return;
