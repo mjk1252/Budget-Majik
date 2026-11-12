@@ -159,11 +159,26 @@
   function unpin() {
     backdrop.style.top = backdrop.style.height = backdrop.style.bottom = "";
   }
+  /* type=number rejects "," on some keyboards/locales; use a text field that
+     shows the decimal keypad and turn commas into dots as the user types. */
+  function makeDecimal(el) {
+    if (el.type === "number") el.type = "text";
+    el.setAttribute("inputmode", "decimal");
+    if (!el.dataset.decimal) {
+      el.dataset.decimal = "1";
+      el.addEventListener("input", () => {
+        const v = el.value.replace(/,/g, ".").replace(/[^\d.\-]/g, "");
+        const i = v.indexOf(".");
+        const clean = i < 0 ? v : v.slice(0, i + 1) + v.slice(i + 1).replace(/\./g, "");
+        if (clean !== el.value) el.value = clean;
+      });
+    }
+  }
   function hintInputs() {
     const body = document.getElementById("modalBody");
     if (!body) return;
     body.querySelectorAll("input[type=number]").forEach((el) => {
-      el.setAttribute("inputmode", "decimal");
+      makeDecimal(el);
       el.setAttribute("enterkeyhint", "done");
     });
     body.querySelectorAll("input[type=text]").forEach((el) => {
@@ -180,7 +195,7 @@
       const title = (document.getElementById("modalTitle") || {}).textContent || "";
       if (!/expense/i.test(title)) return;
       const body = document.getElementById("modalBody");
-      const amountEl = body && body.querySelector("input[type=number]");
+      const amountEl = body && body.querySelector("input[data-decimal]");
       const select = body && body.querySelector("select");
       const option = select && select.options[select.selectedIndex];
       const [x, y] = centerOf(saveBtn);
@@ -208,7 +223,7 @@
   const qaAdd = document.getElementById("qa-add");
   const qaCat = document.getElementById("qa-cat");
   const qaNote = document.getElementById("qa-note");
-  if (qaAmount) { qaAmount.setAttribute("inputmode", "decimal"); qaAmount.setAttribute("enterkeyhint", "done"); }
+  if (qaAmount) { makeDecimal(qaAmount); qaAmount.setAttribute("enterkeyhint", "done"); }
   if (qaNote) { qaNote.setAttribute("enterkeyhint", "done"); qaNote.setAttribute("autocomplete", "off"); }
   function watchQuickAdd() {
     const amount = parseFloat(qaAmount.value);
